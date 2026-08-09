@@ -1,0 +1,11 @@
+# Gradle / build 产物（不提交）
+.gradle/
+build/
+!maven-repo/
+# IDE
+.idea/
+*.iml
+.DS_Store
+
+# 说明：maven-repo/ 是打包好的私有插件产物，必须提交进 git，
+# 这样别的项目 clone/pull 到本地后无需再构建即可直接消费。
