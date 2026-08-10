@@ -26,7 +26,7 @@ Current coordinates:
 |---|---|
 | Gradle Plugin ID | `com.hunter.dexcfgobf` |
 | Group | `com.hunter` |
-| Version | `0.0.4` |
+| Version | `0.0.5` |
 | Java | 17 |
 | Current development baseline | Gradle 9.6.1, AGP 9.3.1 |
 | DEX implementation | `com.android.tools.smali:smali-dexlib2:3.0.9` |
@@ -208,7 +208,7 @@ The distribution is not a standalone copied JAR. It is a directory-style Maven r
 contains the implementation JAR, POM metadata, Gradle plugin marker, and checksums:
 
 ```text
-dex-cfg-obfuscator-0.0.4-maven-repo.zip
+dex-cfg-obfuscator-0.0.5-maven-repo.zip
 └── maven-repo/
     └── com/hunter/...
 ```
@@ -299,7 +299,7 @@ import com.hunter.dexcfgobf.gradle.ObfuscationLevel
 
 plugins {
     id 'com.android.application'
-    id 'com.hunter.dexcfgobf' version '0.0.4'
+    id 'com.hunter.dexcfgobf' version '0.0.5'
 }
 
 dexControlFlowObfuscator {
@@ -327,7 +327,7 @@ import com.hunter.dexcfgobf.gradle.ObfuscationLevel
 
 plugins {
     id("com.android.application")
-    id("com.hunter.dexcfgobf") version "0.0.4"
+    id("com.hunter.dexcfgobf") version "0.0.5"
 }
 
 dexControlFlowObfuscator {
@@ -340,8 +340,10 @@ dexControlFlowObfuscator {
 
 ### 5.5 Build
 
-Version `0.0.4` still performs an in-place post-processing step on the DEX producer output. To start
-from pristine DEX files on every release build, use:
+Version `0.0.5` still performs an in-place post-processing step on the DEX producer output. It
+records the content fingerprint of every successfully transformed DEX directory. A consecutive
+incremental build skips an exact post-transform match, while changed or regenerated DEX is processed
+normally. A clean build remains useful as a final release verification:
 
 ```bash
 ./gradlew :app:assembleRelease --rerun-tasks
@@ -349,7 +351,7 @@ from pristine DEX files on every release build, use:
 ./gradlew clean :app:assembleRelease
 ```
 
-For debug verification:
+To force upstream DEX regeneration:
 
 ```bash
 ./gradlew :app:assembleDebug --rerun-tasks
@@ -560,26 +562,29 @@ conservative path.
 
 Aggregate DEX growth exceeded the internal 100% limit. First:
 
-- Confirm that the build is pristine or uses `--rerun-tasks`.
+- Look for `skip unchanged already-obfuscated DEX dir`; if it is absent and an old plugin may be in
+  use, confirm that the host requests version `0.0.5`.
 - Reduce `HIGH` to `MEDIUM` or `LOW`.
 - Narrow `obfClass`.
 - Exclude generated code with very large or numerous switches.
 
 ### 12.6 A second consecutive build grows unexpectedly
 
-Version `0.0.4` still post-processes the producer output directory in place. Gradle may reuse DEX
-that was modified by the previous build while the obfuscation task is configured to run again. Strong
-flattening has marker detection, but original-switch padding is not fully directory-idempotent.
+Version `0.0.5` still post-processes the producer output directory in place, but now records a
+directory-level content fingerprint. It skips only when the current DEX bytes exactly match the last
+successful post-transform output. Regenerated or changed producer DEX causes a normal transformation,
+preventing a consecutive build from padding original switches again.
 
-Current workaround:
+When upgrading from `0.0.4`, run this once if the build directory already contains DEX processed by
+the old version:
 
 ```bash
 ./gradlew :app:assembleRelease --rerun-tasks
 # or run clean first
 ```
 
-A future integration should use a stable AGP DEX artifact with explicit inputs/outputs, or a reliable
-producer snapshot-and-restore mechanism.
+A future integration should still use a stable AGP DEX artifact with explicit inputs and outputs,
+removing the task-name and producer-directory adapter.
 
 ## 13. Known limitations
 

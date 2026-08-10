@@ -1,6 +1,7 @@
 package com.hunter.dexcfgobf.gradle
 
 import com.hunter.dexcfgobf.DexControlFlowObfuscator
+import com.hunter.dexcfgobf.DexDirectoryState
 import com.hunter.dexcfgobf.ObfuscatorConfig
 import com.hunter.dexcfgobf.ObfuscatorLogger
 import com.hunter.dexcfgobf.ObfuscatorStats
@@ -151,16 +152,44 @@ class DexCfgObfuscatorPlugin implements Plugin<Project> {
                         DexControlFlowObfuscator obfuscator = new DexControlFlowObfuscator(config, obfLogger)
 
                         long totalObf = 0
+                        int skippedDexDirs = 0
+                        int processedDexDirs = 0
                         ObfuscatorStats combinedStats = new ObfuscatorStats()
+                        File stateRoot = new File(project.buildDir,
+                                "intermediates/dex-cfg-obfuscator-state/${variantName}")
                         dexDirs.each { File dir ->
+                            File stateFile
+                            String inputFingerprint
+                            try {
+                                stateFile = DexDirectoryState.stateFile(stateRoot, dir)
+                                inputFingerprint = DexDirectoryState.fingerprint(dir)
+                            } catch (Exception stateFailure) {
+                                throw new GradleException("[dex-cfg-obf] cannot fingerprint ${dir}; " +
+                                        "refusing to risk reprocessing an already-obfuscated DEX", stateFailure)
+                            }
+                            if (DexDirectoryState.matches(stateFile, inputFingerprint)) {
+                                skippedDexDirs++
+                                project.logger.lifecycle("[dex-cfg-obf] ${variantName}: skip unchanged " +
+                                        "already-obfuscated DEX dir ${dir}")
+                                return
+                            }
+
                             ObfuscatorStats stats = obfuscator.obfuscateDexDirectory(dir)
                             combinedStats.mergeFrom(stats)
                             totalObf += stats.methodsObfuscated
                             if (stats.dexFailed > 0) {
                                 throw new GradleException("[dex-cfg-obf] ${stats.dexFailed} dex failed in ${dir}; failing build to avoid shipping half-obfuscated dex")
                             }
+                            try {
+                                DexDirectoryState.write(stateFile, DexDirectoryState.fingerprint(dir))
+                            } catch (Exception stateFailure) {
+                                throw new GradleException("[dex-cfg-obf] transformed ${dir} but could not " +
+                                        "record its post-transform fingerprint; run a clean build before retrying",
+                                        stateFailure)
+                            }
+                            processedDexDirs++
                         }
-                        if (config.reportEnabled) {
+                        if (config.reportEnabled && processedDexDirs > 0) {
                             File reportFile = new File(project.buildDir,
                                     "reports/dex-cfg-obfuscator/${variantName}.json")
                             ObfuscationReportWriter.write(reportFile, variantName, config, combinedStats)
@@ -168,7 +197,8 @@ class DexCfgObfuscatorPlugin implements Plugin<Project> {
                             runAdversarialCommands(ext.adversarialCommands, dexDirs, reportFile,
                                     variantName, ext.adversarialTimeoutSeconds, project)
                         }
-                        project.logger.lifecycle("[dex-cfg-obf] ${variantName}: obfuscated ${totalObf} methods across ${dexDirs.size()} dex dir(s)")
+                        project.logger.lifecycle("[dex-cfg-obf] ${variantName}: obfuscated ${totalObf} " +
+                                "methods across ${processedDexDirs} dex dir(s); skippedUnchanged=${skippedDexDirs}")
                     }
                 }
 

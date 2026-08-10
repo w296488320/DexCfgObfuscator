@@ -24,7 +24,7 @@ DexCfgObfuscator 是一个面向 Android application 模块的 DEX 控制流混�
 |---|---|
 | Gradle Plugin ID | `com.hunter.dexcfgobf` |
 | Group | `com.hunter` |
-| Version | `0.0.4` |
+| Version | `0.0.5` |
 | Java | 17 |
 | 当前开发基线 | Gradle 9.6.1、AGP 9.3.1 |
 | DEX 实现 | `com.android.tools.smali:smali-dexlib2:3.0.9` |
@@ -196,7 +196,7 @@ flowchart LR
 Maven 仓库：
 
 ```text
-dex-cfg-obfuscator-0.0.4-maven-repo.zip
+dex-cfg-obfuscator-0.0.5-maven-repo.zip
 └── maven-repo/
     └── com/hunter/...
 ```
@@ -285,7 +285,7 @@ import com.hunter.dexcfgobf.gradle.ObfuscationLevel
 
 plugins {
     id 'com.android.application'
-    id 'com.hunter.dexcfgobf' version '0.0.4'
+    id 'com.hunter.dexcfgobf' version '0.0.5'
 }
 
 dexControlFlowObfuscator {
@@ -313,7 +313,7 @@ import com.hunter.dexcfgobf.gradle.ObfuscationLevel
 
 plugins {
     id("com.android.application")
-    id("com.hunter.dexcfgobf") version "0.0.4"
+    id("com.hunter.dexcfgobf") version "0.0.5"
 }
 
 dexControlFlowObfuscator {
@@ -326,8 +326,9 @@ dexControlFlowObfuscator {
 
 ### 5.5 构建
 
-当前 `0.0.4` 的 DEX 适配层仍通过 producer 任务输出执行就地后处理。为了保证每次从未混淆的 DEX
-开始，发布构建建议使用：
+当前 `0.0.5` 的 DEX 适配层仍通过 producer 任务输出执行就地后处理。插件会记录成功变换后的 DEX
+目录内容指纹；连续增量构建复用完全相同的 producer 输出时会直接跳过，源码或上游 DEX 变化后则重新处理。
+发布构建仍建议定期使用干净构建作为最终验证：
 
 ```bash
 ./gradlew :app:assembleRelease --rerun-tasks
@@ -335,7 +336,7 @@ dexControlFlowObfuscator {
 ./gradlew clean :app:assembleRelease
 ```
 
-debug 验证：
+需要强制从上游重新生成 DEX 时：
 
 ```bash
 ./gradlew :app:assembleDebug --rerun-tasks
@@ -539,25 +540,26 @@ range/wide 约束或方法结构不适合强模板。最终 `dexFailed=0` 且应
 
 说明整个 DEX 体积增长超过内部 100% 上限。优先：
 
-- 确认使用了干净构建或 `--rerun-tasks`，避免对 producer 目录重复处理。
+- 查看日志是否出现 `skip unchanged already-obfuscated DEX dir`；若没有且怀疑使用了旧插件，确认宿主版本为 `0.0.5`。
 - 将 `HIGH` 降为 `MEDIUM` 或 `LOW`。
 - 缩小 `obfClass` 范围。
 - 将超大/大量 switch 的生成代码加入 `blackClass`。
 
 ### 12.6 连续第二次构建突然膨胀
 
-`0.0.4` 仍是 producer 输出目录的就地后处理模式；Gradle 可能复用上一次已经改写的 DEX，而插件任务
-又被设置为每次执行。强平坦化有标记识别，但原始 switch padding 还不能保证完整的目录级幂等。
+`0.0.5` 仍是 producer 输出目录的就地后处理模式，但已经增加目录级内容指纹：只有当前 DEX 与上次
+成功变换后的字节完全一致时才跳过。producer 重新生成、源码改变或 DEX 内容变化都会使指纹失配并
+触发正常混淆，从而避免连续构建再次扩大原始 switch padding。
 
-当前建议：
+如果从 `0.0.4` 升级时 build 目录里已经残留被旧版处理过的 DEX，应先执行一次：
 
 ```bash
 ./gradlew :app:assembleRelease --rerun-tasks
 # 或先 clean
 ```
 
-后续应迁移到具有显式输入/输出的稳定 AGP DEX Artifact Transform，或给 producer DEX 增加可靠的
-原始快照/恢复机制。
+后续仍应迁移到具有显式输入/输出的稳定 AGP DEX Artifact Transform，以取代任务名和 producer
+目录适配。
 
 ## 13. 已知限制
 
