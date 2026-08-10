@@ -6,8 +6,8 @@ plugins {
 
 // 私有插件坐标。不走任何云端仓库；发布物落在本仓库内的 maven-repo/ 文件夹，
 // 该文件夹会随 git 一起提交，别的项目 clone/pull 到本地后用相对路径即可引用。
-group = 'com.zhenxi'
-version = '1.0.0'
+group = 'com.hunter'
+version = '0.0.4'
 
 java {
     sourceCompatibility = JavaVersion.VERSION_17
@@ -26,7 +26,7 @@ dependencies {
 
     // 插件在 apply 时需要引用 AGP 的任务/变体类型来做任务编排；
     // compileOnly：不把 AGP 打进插件，运行期由宿主工程自带的 AGP 提供。
-    compileOnly 'com.android.tools.build:gradle:8.7.3'
+    compileOnly 'com.android.tools.build:gradle:9.3.1'
 
     testImplementation 'junit:junit:4.13.2'
     testImplementation 'com.android.tools.smali:smali-dexlib2:3.0.9'
@@ -35,9 +35,9 @@ dependencies {
 gradlePlugin {
     plugins {
         dexCfgObfuscator {
-            // 宿主工程用 id 'com.zhenxi.dexcfgobf' 引用本插件。
-            id = 'com.zhenxi.dexcfgobf'
-            implementationClass = 'com.zhenxi.hunter.obfuscator.gradle.DexCfgObfuscatorPlugin'
+            // 宿主工程用 id 'com.hunter.dexcfgobf' 引用本插件。
+            id = 'com.hunter.dexcfgobf'
+            implementationClass = 'com.hunter.dexcfgobf.gradle.DexCfgObfuscatorPlugin'
             displayName = 'DEX Control-Flow Obfuscator'
             description = 'Basic-block reordering DEX control-flow obfuscation for Android (AGP), ' +
                     'runs after R8 and preserves runtime semantics.'

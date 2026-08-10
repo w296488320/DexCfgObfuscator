@@ -1,96 +1,133 @@
-# dex-cfg-obfuscator
+# DexCfgObfuscator
 
-Android DEX **控制流混淆** Gradle 插件（基本块重排）。**私有、纯本地、不走任何云端。**
+[简体中文](doc/README_CN.md) | [English](doc/README_EN.md)
 
-在 R8 产出最终 DEX **之后**、打包**之前**，对指定包名下的方法做基本块物理重排：
-执行序完全靠 goto/条件跳转串联，语义与原方法逐指令一致，但物理布局被彻底打散。
-底层直接操作 smali-dexlib2 指令，用具名 Label 让 dexlib2 自动重算分支偏移、
-自动把 `GOTO`→`GOTO_16`→`GOTO_32` 升格，规避 dex2jar IR 往返导致的
-`Unsigned short value out of range: 65540` 崩溃；零新增寄存器；已用真机 ART `dex2oat` 校验语义等价。
+DexCfgObfuscator is a local Android Gradle plugin that transforms DEX control flow after D8/R8
+and before APK packaging. It combines multi-region control-flow flattening, verifier-aware fallback
+reordering, original-switch padding, payload relocation, structural verification, safety budgets,
+and JSON coverage reports.
 
-## 这是什么分发方式（重要）
+DexCfgObfuscator 是一个纯本地 Android Gradle 插件，在 D8/R8 生成 DEX 后、APK 打包前改写
+指定业务类的控制流。它组合了多区域控制流平坦化、verifier 感知的安全回退重排、原始 switch
+填充、payload 重定位、结构验证、体积预算和 JSON 覆盖报告。
 
-- 插件产物是 **JAR**（Gradle 插件不可能是 AAR，AAR 是 Android 库格式）。
-- 打包好的产物提交在本仓库的 **`maven-repo/`** 文件夹里 —— **它本身就是一个文件夹式 Maven 私有仓库**。
-- 别的项目只要把本仓库 `git clone` / `git pull` 到本地，用一行本地路径指向 `maven-repo/` 即可，
-  **无需联网、无需重新构建、无需 mavenLocal**。
+> This project raises the cost of static analysis. It is not encryption and cannot guarantee that
+> code will never be understood by a human, AI system, or decompiler.
+>
+> 本项目用于提高静态分析成本，不是加密，也不能保证代码永远无法被人工、AI 或反编译器理解。
 
-## 别的项目怎么用（3 步）
+## Documentation / 文档
 
-### 1. clone 本仓库到本地（建议与你的工程同级目录）
+- [中文完整文档](doc/README_CN.md)
+- [Full English documentation](doc/README_EN.md)
 
-```bash
-# 例：与 YourApp 同级
-git clone git@github.com:<你的私有仓库>/DexCfgObfuscator.git
-# 目录结构：
-#   Developer/YourApp
-#   Developer/DexCfgObfuscator/maven-repo   <- 私有仓库
-```
+## Highlights / 主要能力
 
-### 2. 在 `settings.gradle` 的 pluginManagement 里加本地仓库
+- Runs on Android application variants and supports both debug D8 output and release R8 output.
+- Resolves configured source class prefixes through `mapping.txt` after R8.
+- Uses 2–4 independent sparse-switch dispatcher regions according to the selected level.
+- Stores dispatcher state as two XOR shares and reconstructs it only for short-lived dispatch work.
+- Adds reachable equivalent alias/trampoline paths instead of relying only on dead branches.
+- Encodes and pads original switch keys with random 32-bit keys and visible character cases.
+- Relocates `fill-array-data`, packed-switch, and sparse-switch payloads on safe reorder paths.
+- Preserves/rebuilds try ranges and catch handlers on supported transformations.
+- Re-parses staged DEX files and verifies registers, branches, payloads, handlers, and try ranges.
+- Falls back conservatively when verifier analysis, register formats, or post-transform budgets fail.
+- Writes one machine-readable coverage report for every processed variant.
+- Performs all transformations locally; the plugin does not upload source code or DEX files.
+
+## Coordinates / 坐标
+
+| Item | Value |
+|---|---|
+| Plugin ID | `com.hunter.dexcfgobf` |
+| Implementation group | `com.hunter` |
+| Current version | `0.0.4` |
+| Java baseline | Java 17 |
+| Development baseline | Gradle 9.6.1, AGP 9.3.1 |
+| Artifact type | Gradle plugin JAR distributed through a Maven repository |
+
+## Quick start / 快速接入
+
+Download or build the Maven-repository ZIP, extract it, and point the consuming build at the
+included `maven-repo/` directory.
+
+下载或生成 Maven 仓库 ZIP，解压后让宿主项目指向其中的 `maven-repo/` 目录。
+
+`settings.gradle`:
 
 ```groovy
 pluginManagement {
-    // 默认假设 DexCfgObfuscator 与本工程同级；否则用 gradle.properties 的
-    // dexCfgObfuscatorRepo=/自定义路径 覆盖。
-    def dexObfRepo = providers.gradleProperty("dexCfgObfuscatorRepo")
-            .getOrElse("../DexCfgObfuscator/maven-repo")
     repositories {
-        maven {
-            name "DexCfgObfuscatorLocalRepo"
-            url = uri(file(dexObfRepo).isAbsolute()
-                    ? file(dexObfRepo)
-                    : new File(rootDir, dexObfRepo))
-        }
-        gradlePluginPortal(); google(); mavenCentral()
+        maven { url = uri("../DexCfgObfuscator/maven-repo") }
+        gradlePluginPortal()
+        google()
+        mavenCentral()
     }
 }
 ```
 
-### 3. 在 Android application 模块 `app/build.gradle` 应用并配置
+Android application module `build.gradle`:
 
 ```groovy
+import com.hunter.dexcfgobf.gradle.ObfuscationLevel
+
 plugins {
     id 'com.android.application'
-    id 'com.zhenxi.dexcfgobf' version '1.0.0'
+    id 'com.hunter.dexcfgobf' version '0.0.4'
 }
 
 dexControlFlowObfuscator {
-    enabled true                       // 总开关
-    onlyReleaseByDefault true          // true=仅 release；false=debug 也混淆（方便本地测试）
-    obfClass = ["com.your.pkg"]        // 需要混淆的包/类前缀
-    blackClass = []                    // 例外：命中则不混淆
+    enabled true
+    level ObfuscationLevel.MEDIUM
+    obfClass = ['com.example.app']
+    blackClass = ['com.example.app.bootstrap']
 }
 ```
 
-- release：开了 `minifyEnabled true`（有 `minify<Variant>WithR8`）即生效，混淆 R8 产物。
-- debug：无 R8 时自动锚定 `mergeProjectDex<Variant>`，只混淆项目类，不碰第三方库。
+Build from a pristine producer DEX while the current AGP adapter still uses an in-place post-D8/R8
+integration:
 
-## 配置项
+```bash
+./gradlew :app:assembleRelease --rerun-tasks
+```
 
-| 字段 | 默认 | 说明 |
-|------|------|------|
-| `enabled` | `true` | 总开关 |
-| `onlyReleaseByDefault` | `true` | 仅 release 生效；设 false 则 debug 也混淆 |
-| `depth` | `2` | 混淆强度（预留） |
-| `obfClass` | `[]` | 要混淆的包/类前缀；空表示用内置默认 |
-| `blackClass` | `[]` | 例外前缀（追加到内置排除表） |
-| `skipMethodsWithTryCatch` | `true` | 跳过含 try/catch 的方法（稳定优先） |
-| `maxInstructions` | `1500` | 方法指令数上限，超过则跳过 |
+The report is written to:
 
-## 改了算法后如何更新私有仓库
+```text
+app/build/reports/dex-cfg-obfuscator/<variant>.json
+```
+
+## Build and distribute / 构建与分发
 
 ```bash
 cd DexCfgObfuscator
-# 改完 src/ 后重新发布到 maven-repo/
-./gradlew publish
-# 提交（maven-repo/ 会随之更新；改版本号就把 build.gradle 的 version 和使用方的 version 一起改）
-git add -A && git commit -m "update obfuscator" && git push
+./build-release.sh
 ```
 
-## 本地开发/测试
+The script runs tests and plugin validation, publishes the local Maven repository, and creates:
 
-```bash
-./gradlew test     # JVM 单测（含语义等价模拟）
-./gradlew publish  # 发布到本仓库 maven-repo/
+```text
+release/dex-cfg-obfuscator-<version>-maven-repo.zip
+release/dex-cfg-obfuscator-<version>-maven-repo.zip.sha256
 ```
+
+## Important limitations / 重要限制
+
+- The current public AGP API does not expose a stable post-R8 DEX transform artifact for this
+  integration. Version `0.0.4` locates the DEX-producing task and modifies its output after staging
+  verification.
+- Reusing an already modified producer directory in an incremental build can cause original-switch
+  padding to be seen again. Use a clean build or `--rerun-tasks` for reproducible release builds.
+- Decompiler rendering is not an API. A character switch may still be displayed as decimal integers.
+- Some register encodings, wide/range instructions, monitor operations, verifier-ambiguous methods,
+  or very large methods are deliberately reordered or skipped.
+- Always test release artifacts on the Android versions and devices supported by the application.
+
+See the language-specific documentation for the complete integration guide, architecture,
+configuration reference, report schema, validation workflow, and troubleshooting information.
+
+## License / 许可证
+
+No `LICENSE` file has been selected yet. Add the license chosen by the project owner before the
+public release. / 当前尚未选择并加入 `LICENSE` 文件，正式公开发布前需要由项目所有者确定许可证。

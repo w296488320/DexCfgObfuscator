@@ -2,6 +2,7 @@
 .gradle/
 build/
 !maven-repo/
+release/
 # IDE
 .idea/
 *.iml
