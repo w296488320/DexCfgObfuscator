@@ -42,7 +42,7 @@ DexCfgObfuscator 是一个纯本地 Android Gradle 插件，在 D8/R8 生成 DEX
 |---|---|
 | Plugin ID | `com.hunter.dexcfgobf` |
 | Implementation group | `com.hunter` |
-| Current version | `0.0.5` |
+| Current version | `0.0.7` |
 | Java baseline | Java 17 |
 | Development baseline | Gradle 9.6.1, AGP 9.3.1 |
 | Artifact type | Gradle plugin JAR distributed through a Maven repository |
@@ -74,7 +74,7 @@ import com.hunter.dexcfgobf.gradle.ObfuscationLevel
 
 plugins {
     id 'com.android.application'
-    id 'com.hunter.dexcfgobf' version '0.0.5'
+    id 'com.hunter.dexcfgobf' version '0.0.7'
 }
 
 dexControlFlowObfuscator {
@@ -115,11 +115,16 @@ release/dex-cfg-obfuscator-<version>-maven-repo.zip.sha256
 ## Important limitations / 重要限制
 
 - The current public AGP API does not expose a stable post-R8 DEX transform artifact for this
-  integration. Version `0.0.5` locates the DEX-producing task and modifies its output after staging
+  integration. Version `0.0.7` locates the DEX-producing task and modifies its output after staging
   verification.
-- Version `0.0.5` fingerprints each successfully transformed DEX directory and skips an exact
+- Version `0.0.7` supports both `mergeProjectDex<Variant>` and application task graphs that expose
+  only `mergeDex<Variant>`; explicit package filters still prevent dependency classes from being
+  transformed unintentionally.
+- Version `0.0.7` fingerprints each successfully transformed DEX directory and skips an exact
   post-transform match on incremental rebuilds. A changed or regenerated producer output is still
   processed normally.
+- Version `0.0.7` reads the DEX header and selects the matching opcode table, including `dex.039`
+  `invoke-polymorphic`/`invoke-custom`, instead of forcing the legacy API 20 table.
 - Decompiler rendering is not an API. A character switch may still be displayed as decimal integers.
 - Some register encodings, wide/range instructions, monitor operations, verifier-ambiguous methods,
   or very large methods are deliberately reordered or skipped.

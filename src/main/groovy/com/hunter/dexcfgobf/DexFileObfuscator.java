@@ -1,6 +1,5 @@
 package com.hunter.dexcfgobf;
 
-import com.android.tools.smali.dexlib2.Opcodes;
 import com.android.tools.smali.dexlib2.iface.ClassDef;
 import com.android.tools.smali.dexlib2.iface.DexFile;
 import com.android.tools.smali.dexlib2.iface.Method;
@@ -34,11 +33,13 @@ final class DexFileObfuscator {
                                    ObfuscatorStats stats) throws Exception {
         long originalBytes = dexFile.length();
         stats.originalDexBytes += originalBytes;
-        Opcodes opcodes = Opcodes.getDefault();
         DexBackedDexFile dex;
         try (java.io.BufferedInputStream input = new java.io.BufferedInputStream(
                 new java.io.FileInputStream(dexFile))) {
-            dex = DexBackedDexFile.fromInputStream(opcodes, input);
+            // null 让 dexlib2 根据文件头（dex.035/037/038/039...）选择指令表。
+            // 固定使用 Opcodes.getDefault() 会按 API 20 解析，新版 DEX 中的
+            // invoke-polymorphic/invoke-custom 会被误识别为旧 odex quick 指令。
+            dex = DexBackedDexFile.fromInputStream(null, input);
         }
         Set<ClassDef> newClasses = new LinkedHashSet<>();
         boolean anyChange = false;

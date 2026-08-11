@@ -7,7 +7,7 @@ plugins {
 // 私有插件坐标。不走任何云端仓库；发布物落在本仓库内的 maven-repo/ 文件夹，
 // 该文件夹会随 git 一起提交，别的项目 clone/pull 到本地后用相对路径即可引用。
 group = 'com.hunter'
-version = '0.0.5'
+version = '0.0.7'
 
 java {
     sourceCompatibility = JavaVersion.VERSION_17

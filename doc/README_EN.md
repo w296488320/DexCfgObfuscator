@@ -26,7 +26,7 @@ Current coordinates:
 |---|---|
 | Gradle Plugin ID | `com.hunter.dexcfgobf` |
 | Group | `com.hunter` |
-| Version | `0.0.5` |
+| Version | `0.0.7` |
 | Java | 17 |
 | Current development baseline | Gradle 9.6.1, AGP 9.3.1 |
 | DEX implementation | `com.android.tools.smali:smali-dexlib2:3.0.9` |
@@ -36,13 +36,16 @@ Current coordinates:
 ### 2.1 Variant and R8 integration
 
 - Discovers Android application variants through `androidComponents.onVariants`.
-- For non-minified debug variants, anchors after `mergeProjectDex<Variant>` and touches project DEX
-  only.
+- For non-minified debug variants, prefers `mergeProjectDex<Variant>`. If an application task graph
+  exposes only `mergeDex<Variant>`, it safely falls back while still transforming only explicitly
+  included classes.
 - For minified release variants, runs after `minify<Variant>WithR8`.
 - Reads the official `SingleArtifact.OBFUSCATION_MAPPING_FILE` and resolves source prefixes from
   `obfClass` to an exact set of post-R8 class names.
 - Fails a minified release build if the mapping is missing or resolves no target classes.
 - Supports `-repackageclasses` without opening the entire repackaged namespace to transformation.
+- Selects the opcode table from each DEX header (`dex.035/037/038/039/040/041`) so `dex.039`
+  `invoke-polymorphic` / `invoke-custom` instructions are not decoded as legacy odex quick opcodes.
 
 ### 2.2 Multi-region control-flow flattening
 
@@ -185,7 +188,7 @@ plain block reordering.
 ```mermaid
 flowchart LR
     A["Android application variant"] --> B{"minifyEnabled"}
-    B -->|false| C["mergeProjectDex Variant"]
+    B -->|false| C["mergeProjectDex / mergeDex Variant"]
     B -->|true| D["minify Variant WithR8"]
     D --> E["Resolve exact classes through mapping.txt"]
     C --> F["Locate project DEX"]
@@ -208,7 +211,7 @@ The distribution is not a standalone copied JAR. It is a directory-style Maven r
 contains the implementation JAR, POM metadata, Gradle plugin marker, and checksums:
 
 ```text
-dex-cfg-obfuscator-0.0.5-maven-repo.zip
+dex-cfg-obfuscator-0.0.7-maven-repo.zip
 └── maven-repo/
     └── com/hunter/...
 ```
@@ -299,7 +302,7 @@ import com.hunter.dexcfgobf.gradle.ObfuscationLevel
 
 plugins {
     id 'com.android.application'
-    id 'com.hunter.dexcfgobf' version '0.0.5'
+    id 'com.hunter.dexcfgobf' version '0.0.7'
 }
 
 dexControlFlowObfuscator {
@@ -327,7 +330,7 @@ import com.hunter.dexcfgobf.gradle.ObfuscationLevel
 
 plugins {
     id("com.android.application")
-    id("com.hunter.dexcfgobf") version "0.0.5"
+    id("com.hunter.dexcfgobf") version "0.0.7"
 }
 
 dexControlFlowObfuscator {
@@ -340,7 +343,7 @@ dexControlFlowObfuscator {
 
 ### 5.5 Build
 
-Version `0.0.5` still performs an in-place post-processing step on the DEX producer output. It
+Version `0.0.7` still performs an in-place post-processing step on the DEX producer output. It
 records the content fingerprint of every successfully transformed DEX directory. A consecutive
 incremental build skips an exact post-transform match, while changed or regenerated DEX is processed
 normally. A clean build remains useful as a final release verification:
@@ -563,14 +566,14 @@ conservative path.
 Aggregate DEX growth exceeded the internal 100% limit. First:
 
 - Look for `skip unchanged already-obfuscated DEX dir`; if it is absent and an old plugin may be in
-  use, confirm that the host requests version `0.0.5`.
+  use, confirm that the host requests version `0.0.7`.
 - Reduce `HIGH` to `MEDIUM` or `LOW`.
 - Narrow `obfClass`.
 - Exclude generated code with very large or numerous switches.
 
 ### 12.6 A second consecutive build grows unexpectedly
 
-Version `0.0.5` still post-processes the producer output directory in place, but now records a
+Version `0.0.7` still post-processes the producer output directory in place, but now records a
 directory-level content fingerprint. It skips only when the current DEX bytes exactly match the last
 successful post-transform output. Regenerated or changed producer DEX causes a normal transformation,
 preventing a consecutive build from padding original switches again.

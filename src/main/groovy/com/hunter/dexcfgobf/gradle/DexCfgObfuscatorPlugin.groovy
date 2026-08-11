@@ -57,14 +57,14 @@ class DexCfgObfuscatorPlugin implements Plugin<Project> {
 
                 // 定位“产出最终 DEX”的上游任务：
                 //  - minify 开启（release 典型）：minify<Variant>WithR8 直接产出最终 dex；
-                //  - minify 关闭（debug 典型）：没有 R8，项目类由 mergeProjectDex<Variant> 合并产出。
-                // 只混淆项目类（com.* 白名单），因此非 minify 时锚定 mergeProjectDex 足矣，
-                // 不去碰 mergeExtDex/mergeLibDex（第三方库）。
+                //  - minify 关闭（debug 典型）：优先使用只含项目类的 mergeProjectDex<Variant>；
+                //  - 部分 application/AGP 任务图不提供 mergeProjectDex，则回退到 mergeDex<Variant>。
+                // mergeDex 可能同时包含依赖类，但 shouldProcessClass 仍只处理显式业务白名单，
+                // 且绝不单独处理 mergeExtDex/mergeLibDex。
                 String r8Name = "minify${variantCap}WithR8"
                 String mergeProjName = "mergeProjectDex${variantCap}"
+                String mergeDexName = "mergeDex${variantCap}"
                 final boolean useR8Mapping = variant.minifyEnabled
-                final String convDir = "intermediates/dex/${variantName}/" +
-                        (useR8Mapping ? r8Name : mergeProjName)
                 def mappingProvider = useR8Mapping
                         ? variant.artifacts.get(SingleArtifact.OBFUSCATION_MAPPING_FILE.INSTANCE)
                         : null
@@ -75,17 +75,20 @@ class DexCfgObfuscatorPlugin implements Plugin<Project> {
                     t.outputs.upToDateWhen { false }
                     // TaskCollection 是惰性的：producer 即使稍后才由 AGP 注册，也会自动纳入依赖，
                     // 且不会在 producer 创建回调里嵌套 configure（Gradle 9 MutationGuard 禁止后者）。
-                    t.dependsOn(project.tasks.matching { it.name == r8Name || it.name == mergeProjName })
+                    t.dependsOn(project.tasks.matching {
+                        it.name == r8Name || it.name == mergeProjName || it.name == mergeDexName
+                    })
 
                     t.doLast {
-                        Task producer = project.tasks.findByName(useR8Mapping ? r8Name : mergeProjName)
+                        Task producer = useR8Mapping
+                                ? project.tasks.findByName(r8Name)
+                                : (project.tasks.findByName(mergeProjName)
+                                ?: project.tasks.findByName(mergeDexName))
                         if (producer == null) {
-                            // 某些 AGP 补丁版的 minify 标志/任务名可能变化；仅在实际执行时探测兜底。
-                            producer = project.tasks.findByName(r8Name) ?: project.tasks.findByName(mergeProjName)
+                            throw new GradleException("[dex-cfg-obf] no ${r8Name}, ${mergeProjName}, " +
+                                    "or ${mergeDexName} task for ${variantName}")
                         }
-                        if (producer == null) {
-                            throw new GradleException("[dex-cfg-obf] no ${r8Name} nor ${mergeProjName} task for ${variantName}")
-                        }
+                        project.logger.lifecycle("[dex-cfg-obf] ${variantName}: producer ${producer.name}")
                         ObfuscatorConfig config = new ObfuscatorConfig()
                         if (ext.level == null) {
                             throw new GradleException('[dex-cfg-obf] level must not be null')
@@ -135,7 +138,8 @@ class DexCfgObfuscatorPlugin implements Plugin<Project> {
                             if (f.isDirectory()) dexDirs.add(f)
                             else if (f.isFile() && f.name.endsWith('.dex')) dexDirs.add(f.parentFile)
                         }
-                        File conventional = new File(project.buildDir, convDir)
+                        File conventional = new File(project.buildDir,
+                                "intermediates/dex/${variantName}/${producer.name}")
                         if (conventional.isDirectory()) dexDirs.add(conventional)
                         dexDirs = collapseNestedDexDirs(
                                 dexDirs.findAll { it != null && it.isDirectory() }.unique { it.canonicalPath })

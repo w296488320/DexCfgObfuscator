@@ -1,7 +1,6 @@
 package com.hunter.dexcfgobf;
 
 import com.android.tools.smali.dexlib2.Opcode;
-import com.android.tools.smali.dexlib2.Opcodes;
 import com.android.tools.smali.dexlib2.dexbacked.DexBackedDexFile;
 import com.android.tools.smali.dexlib2.iface.ClassDef;
 import com.android.tools.smali.dexlib2.iface.ExceptionHandler;
@@ -41,7 +40,10 @@ final class DexStructuralVerifier {
     static void verify(File dexFile) throws Exception {
         DexBackedDexFile dex;
         try (BufferedInputStream in = new BufferedInputStream(new FileInputStream(dexFile))) {
-            dex = DexBackedDexFile.fromInputStream(Opcodes.getDefault(), in);
+            // 必须按 DEX 文件头自动选择 opcode 表。dex.039 的 0xfa/0xfb 是
+            // invoke-polymorphic；若按 API 20 解码，会被误判为旧 odex quick 指令，
+            // 进而对合法的 move-result 产生假阳性。
+            dex = DexBackedDexFile.fromInputStream(null, in);
         }
         for (ClassDef classDef : dex.getClasses()) {
             for (Method method : classDef.getMethods()) {

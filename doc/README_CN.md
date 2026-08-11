@@ -24,7 +24,7 @@ DexCfgObfuscator 是一个面向 Android application 模块的 DEX 控制流混�
 |---|---|
 | Gradle Plugin ID | `com.hunter.dexcfgobf` |
 | Group | `com.hunter` |
-| Version | `0.0.5` |
+| Version | `0.0.7` |
 | Java | 17 |
 | 当前开发基线 | Gradle 9.6.1、AGP 9.3.1 |
 | DEX 实现 | `com.android.tools.smali:smali-dexlib2:3.0.9` |
@@ -34,12 +34,15 @@ DexCfgObfuscator 是一个面向 Android application 模块的 DEX 控制流混�
 ### 2.1 变体和 R8 接入
 
 - 使用 `androidComponents.onVariants` 发现 Android application 变体。
-- debug 未开启 minify 时，锚定 `mergeProjectDex<Variant>`，仅处理项目 DEX。
+- debug 未开启 minify 时优先锚定 `mergeProjectDex<Variant>`；若应用任务图只提供
+  `mergeDex<Variant>`，则安全回退到该任务，并继续只变换显式白名单类。
 - release 开启 minify 时，在 `minify<Variant>WithR8` 后处理最终 DEX。
 - release 读取官方 `SingleArtifact.OBFUSCATION_MAPPING_FILE`，将 `obfClass` 中的原始类名前缀
   解析成 R8 后的精确类名集合。
 - mapping 缺失或一个目标类都没有解析出来时，release 构建直接失败，避免静默漏混淆。
 - 支持 `-repackageclasses` 场景，不需要直接放开整个重打包目录。
+- 按每个 DEX 的文件头自动选择 `dex.035/037/038/039/040/041` 指令表，避免把
+  `dex.039` 的 `invoke-polymorphic` / `invoke-custom` 误解析成旧 odex quick 指令。
 
 ### 2.2 多区域控制流平坦化
 
@@ -173,7 +176,7 @@ try/catch 默认支持，不需要宿主配置额外开关：
 ```mermaid
 flowchart LR
     A["Android application variant"] --> B{"minifyEnabled"}
-    B -->|false| C["mergeProjectDex Variant"]
+    B -->|false| C["mergeProjectDex / mergeDex Variant"]
     B -->|true| D["minify Variant WithR8"]
     D --> E["解析 mapping.txt 的精确目标类"]
     C --> F["定位项目 DEX"]
@@ -196,7 +199,7 @@ flowchart LR
 Maven 仓库：
 
 ```text
-dex-cfg-obfuscator-0.0.5-maven-repo.zip
+dex-cfg-obfuscator-0.0.7-maven-repo.zip
 └── maven-repo/
     └── com/hunter/...
 ```
@@ -285,7 +288,7 @@ import com.hunter.dexcfgobf.gradle.ObfuscationLevel
 
 plugins {
     id 'com.android.application'
-    id 'com.hunter.dexcfgobf' version '0.0.5'
+    id 'com.hunter.dexcfgobf' version '0.0.7'
 }
 
 dexControlFlowObfuscator {
@@ -313,7 +316,7 @@ import com.hunter.dexcfgobf.gradle.ObfuscationLevel
 
 plugins {
     id("com.android.application")
-    id("com.hunter.dexcfgobf") version "0.0.5"
+    id("com.hunter.dexcfgobf") version "0.0.7"
 }
 
 dexControlFlowObfuscator {
@@ -326,7 +329,7 @@ dexControlFlowObfuscator {
 
 ### 5.5 构建
 
-当前 `0.0.5` 的 DEX 适配层仍通过 producer 任务输出执行就地后处理。插件会记录成功变换后的 DEX
+当前 `0.0.7` 的 DEX 适配层仍通过 producer 任务输出执行就地后处理。插件会记录成功变换后的 DEX
 目录内容指纹；连续增量构建复用完全相同的 producer 输出时会直接跳过，源码或上游 DEX 变化后则重新处理。
 发布构建仍建议定期使用干净构建作为最终验证：
 
@@ -540,14 +543,14 @@ range/wide 约束或方法结构不适合强模板。最终 `dexFailed=0` 且应
 
 说明整个 DEX 体积增长超过内部 100% 上限。优先：
 
-- 查看日志是否出现 `skip unchanged already-obfuscated DEX dir`；若没有且怀疑使用了旧插件，确认宿主版本为 `0.0.5`。
+- 查看日志是否出现 `skip unchanged already-obfuscated DEX dir`；若没有且怀疑使用了旧插件，确认宿主版本为 `0.0.7`。
 - 将 `HIGH` 降为 `MEDIUM` 或 `LOW`。
 - 缩小 `obfClass` 范围。
 - 将超大/大量 switch 的生成代码加入 `blackClass`。
 
 ### 12.6 连续第二次构建突然膨胀
 
-`0.0.5` 仍是 producer 输出目录的就地后处理模式，但已经增加目录级内容指纹：只有当前 DEX 与上次
+`0.0.7` 仍是 producer 输出目录的就地后处理模式，但已经增加目录级内容指纹：只有当前 DEX 与上次
 成功变换后的字节完全一致时才跳过。producer 重新生成、源码改变或 DEX 内容变化都会使指纹失配并
 触发正常混淆，从而避免连续构建再次扩大原始 switch padding。
 
