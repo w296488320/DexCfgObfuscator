@@ -90,7 +90,7 @@ jobs:
 
       - name: Upload protection report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: android-sample-report-${{ matrix.protection }}-minify-${{ matrix.minify }}
           path: samples/android-consumer/app/build/reports/dex-cfg-obfuscator/
