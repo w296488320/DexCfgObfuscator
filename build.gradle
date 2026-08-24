@@ -38,8 +38,8 @@ dependencies {
     implementation 'com.android.tools.smali:smali-dexlib2:3.0.9'
     // 字符串改写先缓冲整个方法，再用 CodeSizeEvaluator 对 JVM Code
     // attribute 的 65535-byte 上限做 fail-closed 预算。
-    implementation 'org.ow2.asm:asm-tree:9.9'
-    implementation 'org.ow2.asm:asm-commons:9.9'
+    implementation 'org.ow2.asm:asm-tree:9.10.1'
+    implementation 'org.ow2.asm:asm-commons:9.10.1'
 
     // 插件在 apply 时需要引用 AGP 的任务/变体类型来做任务编排；
     // compileOnly：不把 AGP 打进插件，运行期由宿主工程自带的 AGP 提供。
@@ -47,8 +47,8 @@ dependencies {
 
     testImplementation 'junit:junit:4.13.2'
     testImplementation 'com.android.tools.smali:smali-dexlib2:3.0.9'
-    testImplementation 'org.ow2.asm:asm:9.9'
-    testImplementation 'org.ow2.asm:asm-tree:9.9'
+    testImplementation 'org.ow2.asm:asm:9.10.1'
+    testImplementation 'org.ow2.asm:asm-tree:9.10.1'
     // Reflection contract tests load InstrumentationParameters at test runtime only.
     testRuntimeOnly 'com.android.tools.build:gradle-api:9.3.1'
     // Executes the same embedded R8 generation used by AGP 9.3.1 in rule-contract tests.
