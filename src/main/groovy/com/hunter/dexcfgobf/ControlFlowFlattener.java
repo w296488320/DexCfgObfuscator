@@ -114,7 +114,7 @@ final class ControlFlowFlattener {
         int n = insns.size();
 
         // ---- 识别“尾部数据区”：array-data（fill-array-data 的 payload）总是被 d8/dx 排在
-        // 方法末尾（最后一条 return 之后），用 nop 做 4 字节对齐。字符串加密(StringFog)会把每个
+        // 方法末尾（最后一条 return 之后），用 nop 做 4 字节对齐。内置字符串加密会把每个
         // 字符串字面量变成 new byte[]{...}+fill-array-data，从而给几乎所有“有意思的方法”都带上
         // 这些 payload。旧逻辑遇到 fill-array-data 直接跳过整方法 => 大量方法未混淆。
         // 这里改为：把 [execN, n) 的 array-data payload 抽出、末尾按 Label 重新发射，dexlib2 自动

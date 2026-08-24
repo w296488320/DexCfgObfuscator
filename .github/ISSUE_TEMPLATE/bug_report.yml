@@ -1,0 +1,69 @@
+name: Bug report
+description: Report a reproducible build, transformation, or runtime problem
+title: "[Bug] "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Please remove credentials, signing material, private source code, and sensitive DEX contents before submitting.
+
+  - type: input
+    id: plugin-version
+    attributes:
+      label: Plugin version
+      placeholder: 0.1.0
+    validations:
+      required: true
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: Build environment
+      description: Include OS, JDK, Gradle, AGP, Kotlin, module type, minSdk, and whether R8 is enabled.
+    validations:
+      required: true
+
+  - type: textarea
+    id: configuration
+    attributes:
+      label: Minimal plugin configuration
+      render: groovy
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction steps
+      description: Link a minimal public reproducer when possible.
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior and sanitized logs
+      description: Prefer a stack trace produced with --stacktrace. Do not attach proprietary APK/DEX files.
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Submission checks
+      options:
+        - label: I reproduced this with the latest released version.
+          required: true
+        - label: I removed secrets and private application data.
+          required: true
+        - label: This is not a security vulnerability.
+          required: true

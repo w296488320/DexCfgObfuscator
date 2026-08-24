@@ -1,48 +1,32 @@
 package com.hunter.dexcfgobf.gradle
 
+import groovy.transform.PackageScope
 import org.gradle.api.Action
 
 /**
- * DSL 扩展：dexControlFlowObfuscator { ... }
- * 仅公开稳定且确实需要宿主选择的配置，其余安全能力由插件默认开启。
+ * 根 DSL 容器：dexControlFlowObfuscator { dexObfuscator { ... }; stringEncryption { ... } }
+ *
+ * 每项保护能力拥有独立子扩展。0.0.16 暂时保留旧平铺 CFG 字段作为迁移别名；
+ * 新旧 CFG 写法不能混用，避免配置覆盖顺序产生不明确的保护结果。
  */
 class DexCfgObfuscatorExtension {
-    /** 是否启用 application 后置 DEX CFG 混淆；不控制独立的字符串阶段。 */
-    boolean enabled = true
-    /**
-     * CFG 生效的 variantName 或 buildType（大小写不敏感）；空列表表示所有 application variant。
-     * 该过滤器不影响始终独立运行的字符串阶段。
-     */
-    List<String> enabledVariants = []
-    /** 混淆等级，默认在复杂度、体积和 verifier 稳定性之间取平衡。 */
-    ObfuscationLevel level = ObfuscationLevel.MEDIUM
-    /** 需要混淆的包/类前缀（对齐 BlackObfuscator.obfClass）。点分或斜杠均可。 */
-    List<String> obfClass = []
-    /** 例外前缀：命中则不混淆（对齐 BlackObfuscator.blackClass）。 */
-    List<String> blackClass = []
-    /** CFG 质量门禁：实际混淆方法数不得低于该值；0 表示不限制。 */
-    int minObfuscatedMethods = 0
-    /** CFG 质量门禁：强平坦化方法数下限；reorder 不计入。 */
-    int minFlattenedMethods = 0
-    /** CFG 质量门禁：混淆方法数 / 扫描方法数；0 表示不限制。 */
-    double minObfuscatedRatio = 0.0d
-    /** CFG 体积门禁：DEX 总增幅百分比不得超过该值。 */
-    double maxSizeIncreasePercent = 100.0d
-    /**
-     * 可选对抗命令，每项必须是参数数组而非 shell 字符串。
-     * 支持占位符 {dexDir}/{report}/{variant}，非零退出或超时会让构建失败。
-     */
-    List<List<String>> adversarialCommands = []
-    int adversarialTimeoutSeconds = 300
-
-    /**
-     * D8/R8 前执行的字符串保护阶段。默认关闭以保持 0.0.x 老配置的产物行为不变。
-     * 未单独配置 packages/excludePackages 时分别继承 obfClass/blackClass；显式 [] 不继承。
-     */
+    private final CfgDslUsageState cfgDslUsage = new CfgDslUsageState()
+    final DexObfuscatorExtension dexObfuscator = new DexObfuscatorExtension(cfgDslUsage)
     final StringEncryptionExtension stringEncryption = new StringEncryptionExtension()
 
-    void enabledVariants(Object value) {
-        enabledVariants = variantStrings(value)
+    private List<String> legacyEnabledVariants = []
+
+    void dexObfuscator(Closure<?> configure) {
+        markNestedCfgDsl()
+        Closure<?> nested = (Closure<?>) configure.rehydrate(
+                dexObfuscator, configure.owner, configure.thisObject)
+        nested.resolveStrategy = Closure.DELEGATE_FIRST
+        nested.call()
+    }
+
+    void dexObfuscator(Action<? super DexObfuscatorExtension> configure) {
+        markNestedCfgDsl()
+        configure.execute(dexObfuscator)
     }
 
     void stringEncryption(Closure<?> configure) {
@@ -57,22 +41,149 @@ class DexCfgObfuscatorExtension {
     }
 
     /** 便于从旧 StringFog 配置迁移的 DSL 别名。 */
-    void stringFog(Closure<?> configure) {
-        stringEncryption(configure)
-    }
-
+    void stringFog(Closure<?> configure) { stringEncryption(configure) }
     void stringFog(Action<? super StringEncryptionExtension> configure) {
         stringEncryption(configure)
     }
-
-    void stringfog(Closure<?> configure) {
-        stringEncryption(configure)
-    }
-
+    void stringfog(Closure<?> configure) { stringEncryption(configure) }
     void stringfog(Action<? super StringEncryptionExtension> configure) {
         stringEncryption(configure)
     }
 
+    /*
+     * 0.0.15 及更早版本的平铺 CFG DSL 兼容层。所有字段直接委托给唯一的
+     * dexObfuscator 对象；enabledVariants 只保留旧脚本的 release-only 语义，
+     * 新 dexObfuscator 模块不再公开 variant selector。
+     */
+    @Deprecated boolean getEnabled() { dexObfuscator.enabled }
+    /** Retains the exact accessor emitted by the 0.0.15 Groovy boolean property. */
+    @Deprecated boolean isEnabled() { dexObfuscator.enabled }
+    @Deprecated void setEnabled(boolean value) {
+        mutateLegacyCfg('enabled') { dexObfuscator.enabled = value }
+    }
+    @Deprecated void enable(boolean value) { setEnabled(value) }
+    @Deprecated void enabled(boolean value) { setEnabled(value) }
+
+    @Deprecated ObfuscationLevel getLevel() { dexObfuscator.level }
+    @Deprecated void setLevel(ObfuscationLevel value) {
+        mutateLegacyCfg('level') { dexObfuscator.level = value }
+    }
+    @Deprecated void level(ObfuscationLevel value) { setLevel(value) }
+
+    @Deprecated List<String> getObfClass() { dexObfuscator.obfClass }
+    @Deprecated void setObfClass(List<String> value) {
+        mutateLegacyCfg('obfClass') { dexObfuscator.obfClass = value }
+    }
+    @Deprecated void obfClass(Object value) {
+        mutateLegacyCfg('obfClass') { dexObfuscator.obfClass(value) }
+    }
+
+    @Deprecated List<String> getBlackClass() {
+        dexObfuscator.blackClass
+    }
+    @Deprecated void setBlackClass(List<String> value) {
+        mutateLegacyCfg('blackClass') { dexObfuscator.blackClass = value }
+    }
+    @Deprecated void blackClass(Object value) {
+        mutateLegacyCfg('blackClass') { dexObfuscator.blackClass(value) }
+    }
+
+    @Deprecated int getMinObfuscatedMethods() {
+        dexObfuscator.minObfuscatedMethods
+    }
+    @Deprecated void setMinObfuscatedMethods(int value) {
+        mutateLegacyCfg('minObfuscatedMethods') { dexObfuscator.minObfuscatedMethods = value }
+    }
+    @Deprecated void minObfuscatedMethods(int value) { setMinObfuscatedMethods(value) }
+
+    @Deprecated int getMinFlattenedMethods() {
+        dexObfuscator.minFlattenedMethods
+    }
+    @Deprecated void setMinFlattenedMethods(int value) {
+        mutateLegacyCfg('minFlattenedMethods') { dexObfuscator.minFlattenedMethods = value }
+    }
+    @Deprecated void minFlattenedMethods(int value) { setMinFlattenedMethods(value) }
+
+    @Deprecated double getMinObfuscatedRatio() {
+        dexObfuscator.minObfuscatedRatio
+    }
+    @Deprecated void setMinObfuscatedRatio(double value) {
+        mutateLegacyCfg('minObfuscatedRatio') { dexObfuscator.minObfuscatedRatio = value }
+    }
+    @Deprecated void minObfuscatedRatio(double value) { setMinObfuscatedRatio(value) }
+
+    @Deprecated double getMaxSizeIncreasePercent() {
+        dexObfuscator.maxSizeIncreasePercent
+    }
+    @Deprecated void setMaxSizeIncreasePercent(double value) {
+        mutateLegacyCfg('maxSizeIncreasePercent') {
+            dexObfuscator.maxSizeIncreasePercent = value
+        }
+    }
+    @Deprecated void maxSizeIncreasePercent(double value) { setMaxSizeIncreasePercent(value) }
+
+    @Deprecated List<List<String>> getAdversarialCommands() {
+        dexObfuscator.adversarialCommands
+    }
+    @Deprecated void setAdversarialCommands(List<List<String>> value) {
+        mutateLegacyCfg('adversarialCommands') { dexObfuscator.adversarialCommands = value }
+    }
+    @Deprecated void adversarialCommands(Object value) {
+        mutateLegacyCfg('adversarialCommands') { dexObfuscator.adversarialCommands(value) }
+    }
+
+    @Deprecated int getAdversarialTimeoutSeconds() {
+        dexObfuscator.adversarialTimeoutSeconds
+    }
+    @Deprecated void setAdversarialTimeoutSeconds(int value) {
+        mutateLegacyCfg('adversarialTimeoutSeconds') {
+            dexObfuscator.adversarialTimeoutSeconds = value
+        }
+    }
+    @Deprecated void adversarialTimeoutSeconds(int value) {
+        setAdversarialTimeoutSeconds(value)
+    }
+
+    @Deprecated List<String> getEnabledVariants() {
+        legacyEnabledVariants
+    }
+    /** Retains the exact setter descriptor emitted by the 0.0.15 Groovy List property. */
+    @Deprecated void setEnabledVariants(List<String> value) {
+        markLegacyCfgDsl('enabledVariants')
+        legacyEnabledVariants = value == null ? null : new ArrayList<>(value)
+    }
+    @Deprecated void enabledVariants(Object value) {
+        setEnabledVariants(variantStrings(value))
+    }
+
+    /** Plugin-only compatibility view; unlike deprecated getters this never marks DSL usage. */
+    @PackageScope List<String> legacyEnabledVariantsForPlugin() {
+        legacyEnabledVariants == null
+                ? null : Collections.unmodifiableList(legacyEnabledVariants)
+    }
+
+    /** Returns true once so a multi-variant build emits one migration warning. */
+    @PackageScope synchronized boolean consumeLegacyCfgDslWarning() {
+        cfgDslUsage.consumeLegacyWarning()
+    }
+
+    @PackageScope String firstLegacyCfgPropertyForPlugin() {
+        cfgDslUsage.firstLegacyProperty()
+    }
+
+    private void markNestedCfgDsl() {
+        cfgDslUsage.markNested()
+    }
+
+    private void mutateLegacyCfg(String propertyName, Closure<?> mutation) {
+        cfgDslUsage.mutateLegacy(propertyName, mutation)
+    }
+
+    private void markLegacyCfgDsl(String propertyName) {
+        cfgDslUsage.markLegacy(propertyName)
+    }
+
+    /** Preserve null entries so the selector validator fails instead of enabling all variants. */
     private static List<String> variantStrings(Object value) {
         if (value == null) return [null]
         if (value instanceof Collection) {

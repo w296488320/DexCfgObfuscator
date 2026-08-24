@@ -108,6 +108,10 @@ public class StringClassConstantPoolCompactorTest {
         assertTrue(required.contains(bridge + "->decrypt([B[B)Ljava/lang/String;"));
         assertTrue(required.contains(bridge
                 + "->decrypt(Ljava/lang/String;Ljava/lang/String;)Ljava/lang/String;"));
+        assertEquals(new java.util.TreeSet<>(java.util.Arrays.asList(
+                        bridge, "fixture/library/ByteCaller", "fixture/library/StringCaller")),
+                StringClassConstantPoolCompactor.scanClassOwners(
+                        Collections.singletonList(root)));
     }
 
     @Test

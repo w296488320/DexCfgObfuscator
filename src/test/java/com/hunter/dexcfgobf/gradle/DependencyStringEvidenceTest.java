@@ -41,9 +41,9 @@ public class DependencyStringEvidenceTest {
         DexCfgObfuscatorPlugin.DependencyStringEvidence loaded =
                 DexCfgObfuscatorPlugin.readDependencyStringEvidence(
                         fixture.evidence, Collections.singletonList(fixture.outputs),
-                        "dependency-transform", "release", ":IFAA");
+                        "dependency-transform", "release", ":feature");
 
-        assertEquals(":IFAA", loaded.getProjectPath());
+        assertEquals(":feature", loaded.getProjectPath());
         assertEquals(1, loaded.getStats().stringConstantsEncrypted);
         assertEquals(Collections.singleton(fixture.hash),
                 loaded.getScope().getPlaintextHashes());
@@ -60,36 +60,36 @@ public class DependencyStringEvidenceTest {
         assertThrows(GradleException.class, () ->
                 DexCfgObfuscatorPlugin.readDependencyStringEvidence(stale.evidence,
                         Collections.singletonList(stale.outputs), "dependency-transform",
-                        "release", ":IFAA"));
+                        "release", ":feature"));
 
         Fixture partial = fixture("PARTIAL_OR_FULL", true, 0);
         assertThrows(GradleException.class, () ->
                 DexCfgObfuscatorPlugin.readDependencyStringEvidence(partial.evidence,
                         Collections.singletonList(partial.outputs), "dependency-transform",
-                        "release", ":IFAA"));
+                        "release", ":feature"));
         DexCfgObfuscatorPlugin.DependencyStringEvidence knownPartial =
                 DexCfgObfuscatorPlugin.readDependencyStringEvidence(partial.evidence,
                         Collections.singletonList(partial.outputs), "dependency-transform",
-                        "debug", ":IFAA", false);
+                        "debug", ":feature", false);
         assertEquals("PARTIAL_OR_FULL", knownPartial.getStats().stringCoverageStatus);
 
         Fixture unverified = fixture("FULL", false, 0);
         assertThrows(GradleException.class, () ->
                 DexCfgObfuscatorPlugin.readDependencyStringEvidence(unverified.evidence,
                         Collections.singletonList(unverified.outputs), "dependency-transform",
-                        "release", ":IFAA"));
+                        "release", ":feature"));
 
         Fixture leaked = fixture("FULL", true, 1);
         assertThrows(GradleException.class, () ->
                 DexCfgObfuscatorPlugin.readDependencyStringEvidence(leaked.evidence,
                         Collections.singletonList(leaked.outputs), "dependency-transform",
-                        "release", ":IFAA"));
+                        "release", ":feature"));
 
         Fixture wrongDigest = fixture("FULL", true, 0);
         assertThrows(GradleException.class, () ->
                 DexCfgObfuscatorPlugin.readDependencyStringEvidence(wrongDigest.evidence,
                         Collections.singletonList(wrongDigest.outputs), "different-transform",
-                        "release", ":IFAA"));
+                        "release", ":feature"));
     }
 
     @Test
@@ -139,14 +139,14 @@ public class DependencyStringEvidenceTest {
     public void validatesAbsoluteExistingUniqueDependencyProjectPaths() {
         Project root = ProjectBuilder.builder().withName("root").build();
         Project app = ProjectBuilder.builder().withName("app").withParent(root).build();
-        Project library = ProjectBuilder.builder().withName("IFAA").withParent(root).build();
+        Project library = ProjectBuilder.builder().withName("feature").withParent(root).build();
 
         assertEquals(Collections.singletonList(library.getPath()),
                 DexCfgObfuscatorPlugin.validateDependencyEvidenceProjects(app,
-                        Collections.singletonList(":IFAA")));
+                        Collections.singletonList(":feature")));
         assertThrows(GradleException.class, () ->
                 DexCfgObfuscatorPlugin.validateDependencyEvidenceProjects(app,
-                        Collections.singletonList("IFAA")));
+                        Collections.singletonList("feature")));
         assertThrows(GradleException.class, () ->
                 DexCfgObfuscatorPlugin.validateDependencyEvidenceProjects(app,
                         Collections.singletonList(":missing")));
@@ -155,27 +155,27 @@ public class DependencyStringEvidenceTest {
                         Collections.singletonList(":app")));
         assertThrows(GradleException.class, () ->
                 DexCfgObfuscatorPlugin.validateDependencyEvidenceProjects(app,
-                        Arrays.asList(":IFAA", ":IFAA")));
+                        Arrays.asList(":feature", ":feature")));
     }
 
     @Test
     public void rejectsMissingOrPreMinifiedDependencyVariantDescriptor() {
-        Project project = ProjectBuilder.builder().withName("IFAA").build();
+        Project project = ProjectBuilder.builder().withName("feature").build();
         Task task = project.getTasks().create("compactReleaseLibraryStringConstantPools");
         assertThrows(GradleException.class, () ->
                 DexCfgObfuscatorPlugin.requireUnminifiedDependencyEvidenceTask(
-                        task, "release", ":IFAA"));
+                        task, "release", ":feature"));
 
         task.getExtensions().getExtraProperties().set(
                 "dexCfgObfuscatorLibraryVariantMinified", true);
         assertThrows(GradleException.class, () ->
                 DexCfgObfuscatorPlugin.requireUnminifiedDependencyEvidenceTask(
-                        task, "release", ":IFAA"));
+                        task, "release", ":feature"));
 
         task.getExtensions().getExtraProperties().set(
                 "dexCfgObfuscatorLibraryVariantMinified", false);
         DexCfgObfuscatorPlugin.requireUnminifiedDependencyEvidenceTask(
-                task, "release", ":IFAA");
+                task, "release", ":feature");
     }
 
     private Fixture fixture(String coverage, boolean verified, int leaks) throws Exception {

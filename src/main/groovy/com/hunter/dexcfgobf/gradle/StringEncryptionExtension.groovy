@@ -19,9 +19,9 @@ class StringEncryptionExtension {
     Object algorithm
     Object keyGenerator
     Object mode = StringEncryptionMode.BYTES
-    /** null 表示继承外层 obfClass；显式空列表表示不处理任何包并在配置校验时失败。 */
+    /** null 表示继承 dexObfuscator.obfClass；显式空列表表示不处理任何包并在配置校验时失败。 */
     List<String> packages
-    /** null 表示继承外层 blackClass；显式空列表表示不继承任何 CFG 排除项。 */
+    /** null 表示继承 dexObfuscator.blackClass；显式空列表表示不继承任何 CFG 排除项。 */
     List<String> excludePackages
     long seed = 0x6D0F27BD4A91C35EL
     int maxStringBytes = 4096
@@ -49,7 +49,7 @@ class StringEncryptionExtension {
     int maxUnsafeSkippedStrings = 0
     /** custom shouldEncrypt/shouldFog 主动过滤默认不允许静默放行。 */
     int maxFilteredStrings = 0
-    /** Release 默认要求可证明的全量覆盖；使用 --rerun-tasks 触发完整 ASM 访问。 */
+    /** Release 默认要求可证明的全量覆盖；插件会为严格 variant 自动触发完整 ASM 访问。 */
     boolean failOnUnknownCoverage = true
     /** failOnUnknownCoverage 的 variant/buildType 过滤；默认只约束 release。 */
     List<String> failOnUnknownCoverageVariants = ['release']
@@ -59,7 +59,7 @@ class StringEncryptionExtension {
     String configurationId = ''
     String bridgeClass
     /**
-     * application 最终 DEX 门禁还要聚合的 Android library project path（例如 ':IFAA'）。
+     * application 最终 DEX 门禁还要聚合的 Android library project path（例如 ':feature'）。
      * library 必须对相同 variant 产出当前、FULL、member-scoped v6 evidence。
      */
     List<String> dependencyEvidenceProjects = []

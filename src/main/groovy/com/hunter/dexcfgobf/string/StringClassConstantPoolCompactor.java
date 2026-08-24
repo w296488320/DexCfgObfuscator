@@ -140,6 +140,46 @@ public final class StringClassConstantPoolCompactor {
         return toHex(digest.digest());
     }
 
+    /** Complete pre-D8/R8 owner inventory from AGP scoped class roots. */
+    public static Set<String> scanClassOwners(Collection<File> roots) throws IOException {
+        Set<String> owners = new TreeSet<>();
+        for (Path artifact : collectArtifacts(roots)) {
+            String name = artifact.getFileName().toString();
+            if (name.endsWith(".class")) {
+                addClassOwner(Files.readAllBytes(artifact), owners, artifact.toString());
+            } else if (name.endsWith(".jar")) {
+                // AGP/Jetifier may rewrite an originally signed dependency without retaining a
+                // valid JAR signature. The artifact is already a trusted Gradle classpath input;
+                // inventory needs the actual class bytes, not legacy signature verification.
+                try (JarFile jar = new JarFile(artifact.toFile(), false)) {
+                    for (JarEntry entry : classEntries(jar)) {
+                        try (InputStream input = jar.getInputStream(entry)) {
+                            addClassOwner(readAll(input), owners,
+                                    artifact + "!/" + entry.getName());
+                        }
+                    }
+                }
+            }
+        }
+        if (owners.isEmpty()) {
+            throw new IOException("class output roots contain no .class files or JAR class entries");
+        }
+        return Collections.unmodifiableSet(owners);
+    }
+
+    private static void addClassOwner(byte[] bytes, Set<String> owners, String source)
+            throws IOException {
+        try {
+            String owner = new ClassReader(bytes).getClassName();
+            if (owner == null || owner.isEmpty()) {
+                throw new IOException("JVM class owner is missing in " + source);
+            }
+            owners.add(owner);
+        } catch (IllegalArgumentException failure) {
+            throw new IOException("cannot read JVM class owner from " + source, failure);
+        }
+    }
+
     /**
      * Finds only calls emitted by transformed project classes into the generated bridge.
      *

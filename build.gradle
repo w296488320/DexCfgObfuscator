@@ -1,23 +1,36 @@
+import org.gradle.api.publish.maven.MavenPublication
+import org.gradle.api.publish.maven.tasks.PublishToMavenRepository
+
 plugins {
     id 'groovy'
     id 'java-gradle-plugin'
     id 'maven-publish'
+    id 'signing'
 }
 
-// 私有插件坐标。不走任何云端仓库；发布物落在本仓库内的 maven-repo/ 文件夹，
-// 该文件夹会随 git 一起提交，别的项目 clone/pull 到本地后用相对路径即可引用。
-group = 'com.hunter'
-version = '0.0.14'
+// Public coordinates use the GitHub-owned Maven Central namespace. Java package names intentionally
+// stay under com.hunter: changing Maven coordinates does not require moving implementation classes.
+def pomGroupId = providers.gradleProperty('POM_GROUP_ID')
+        .getOrElse('io.github.w296488320')
+def pomArtifactId = providers.gradleProperty('POM_ARTIFACT_ID')
+        .getOrElse('dex-cfg-obfuscator')
+def pomVersion = providers.gradleProperty('POM_VERSION')
+        .getOrElse('0.1.0')
+def publicPluginId = providers.gradleProperty('POM_PLUGIN_ID')
+        .getOrElse('io.github.w296488320.dexcfgobf')
+
+group = pomGroupId
+version = pomVersion
+
+base {
+    archivesName = pomArtifactId
+}
 
 java {
     sourceCompatibility = JavaVersion.VERSION_17
     targetCompatibility = JavaVersion.VERSION_17
     withSourcesJar()
-}
-
-repositories {
-    google()
-    mavenCentral()
+    withJavadocJar()
 }
 
 dependencies {
@@ -36,6 +49,8 @@ dependencies {
     testImplementation 'com.android.tools.smali:smali-dexlib2:3.0.9'
     testImplementation 'org.ow2.asm:asm:9.9'
     testImplementation 'org.ow2.asm:asm-tree:9.9'
+    // Reflection contract tests load InstrumentationParameters at test runtime only.
+    testRuntimeOnly 'com.android.tools.build:gradle-api:9.3.1'
     // Executes the same embedded R8 generation used by AGP 9.3.1 in rule-contract tests.
     testRuntimeOnly 'com.android.tools.build:builder:9.3.1'
 }
@@ -43,8 +58,7 @@ dependencies {
 gradlePlugin {
     plugins {
         dexCfgObfuscator {
-            // 宿主工程用 id 'com.hunter.dexcfgobf' 引用本插件。
-            id = 'com.hunter.dexcfgobf'
+            id = publicPluginId
             implementationClass = 'com.hunter.dexcfgobf.gradle.DexCfgObfuscatorPlugin'
             displayName = 'DEX String and Control-Flow Obfuscator'
             description = 'Pre-D8/R8 string protection for Android applications/libraries; ' +
@@ -53,16 +67,270 @@ gradlePlugin {
     }
 }
 
-// 发布到本仓库内的 maven-repo/ 文件夹（纯本地、随 git 提交）。
-// java-gradle-plugin 会自动注入 pluginMaven publication + plugin-marker，
-// 二者都会写入 maven-repo/，clone 后无需再构建即可被别的项目消费。
+// Java sources live beside the Groovy sources. One CLI usage comment contains literal angle-bracket
+// placeholders that Javadoc interprets as tags, so omit that internal CLI class from the public API
+// archive instead of weakening Javadoc validation for the rest of the project.
+tasks.named('javadoc') {
+    exclude '**/ObfuscatorCli.java'
+    options.encoding = 'UTF-8'
+    options.charSet = 'UTF-8'
+    options.addBooleanOption('Xdoclint:none', true)
+}
+
+def legalFiles = ['LICENSE', 'NOTICE', 'THIRD_PARTY_NOTICES.md']
+tasks.withType(Jar).configureEach {
+    legalFiles.each { legalName ->
+        def legalFile = rootProject.file(legalName)
+        if (legalFile.isFile()) {
+            from(legalFile) {
+                into 'META-INF'
+            }
+        }
+    }
+}
+
+tasks.named('jar') {
+    manifest {
+        attributes(
+                'Implementation-Title': 'DEX String and Control-Flow Obfuscator',
+                'Implementation-Version': project.version,
+                'Implementation-Vendor': 'w296488320'
+        )
+    }
+}
+
+def projectUrl = 'https://github.com/w296488320/DexCfgObfuscator'
+def projectDescription = 'Gradle plugin providing pre-D8/R8 string protection and ' +
+        'post-D8/R8 DEX control-flow obfuscation for Android.'
+
+def centralBundleRepo = providers.gradleProperty('centralBundleRepo')
+def centralPublishingEnabled = providers.gradleProperty('centralPublishing')
+        .orElse(providers.environmentVariable('MAVEN_CENTRAL_PUBLISHING'))
+        .map { it.toBoolean() }
+        .getOrElse(false)
+def centralUsername = providers.environmentVariable('MAVEN_CENTRAL_USERNAME')
+        .orElse(providers.gradleProperty('mavenCentralUsername'))
+def centralPassword = providers.environmentVariable('MAVEN_CENTRAL_PASSWORD')
+        .orElse(providers.gradleProperty('mavenCentralPassword'))
+def centralNamespace = providers.environmentVariable('MAVEN_CENTRAL_NAMESPACE')
+        .orElse(providers.gradleProperty('mavenCentralNamespace'))
+        .getOrElse(pomGroupId)
+def centralOutputRequested = centralBundleRepo.isPresent() || centralPublishingEnabled
+
+if (centralOutputRequested) {
+    if (pomVersion.toUpperCase(Locale.ROOT).endsWith('-SNAPSHOT')) {
+        throw new GradleException("Maven Central output requires a final version, not ${pomVersion}")
+    }
+    if (pomGroupId != centralNamespace && !pomGroupId.startsWith("${centralNamespace}.")) {
+        throw new GradleException("POM_GROUP_ID ${pomGroupId} is outside the verified Central " +
+                "namespace ${centralNamespace}")
+    }
+    if (publicPluginId != centralNamespace
+            && !publicPluginId.startsWith("${centralNamespace}.")) {
+        throw new GradleException("POM_PLUGIN_ID ${publicPluginId} is outside the verified Central " +
+                "namespace ${centralNamespace}")
+    }
+}
+
+// Local publishing remains the default. A Central bundle is opt-in and writes to a caller-owned,
+// normally temporary Maven-layout directory. Direct staging is a second explicit opt-in.
 publishing {
+    publications.withType(MavenPublication).configureEach {
+        if (name == 'pluginMaven') {
+            artifactId = pomArtifactId
+        }
+        pom {
+            name.set('DEX String and Control-Flow Obfuscator Gradle Plugin')
+            description.set(projectDescription)
+            url.set(projectUrl)
+            licenses {
+                license {
+                    name.set('The Apache License, Version 2.0')
+                    url.set('https://www.apache.org/licenses/LICENSE-2.0.txt')
+                    distribution.set('repo')
+                }
+            }
+            developers {
+                developer {
+                    id.set('w296488320')
+                    name.set('w296488320')
+                    url.set('https://github.com/w296488320')
+                }
+            }
+            scm {
+                connection.set('scm:git:https://github.com/w296488320/DexCfgObfuscator.git')
+                developerConnection.set('scm:git:ssh://git@github.com/w296488320/DexCfgObfuscator.git')
+                url.set("${projectUrl}/tree/main")
+                tag.set('HEAD')
+            }
+            issueManagement {
+                system.set('GitHub Issues')
+                url.set("${projectUrl}/issues")
+            }
+        }
+    }
+
     repositories {
         maven {
-            name = "LocalPluginRepo"
-            // 默认发布到随仓库分发的目录；集成测试可用独立临时仓库，避免提前占用正式版本。
+            name = 'LocalPluginRepo'
+            // 集成测试可传独立临时仓库，避免提前占用正式版本。
             url = uri(providers.gradleProperty('dexCfgObfuscatorPublishRepo')
                     .getOrElse("${rootDir}/maven-repo"))
         }
+
+        if (centralBundleRepo.isPresent()) {
+            maven {
+                name = 'CentralBundle'
+                url = uri(centralBundleRepo.get())
+            }
+        }
+
+        if (centralPublishingEnabled) {
+            if (!centralUsername.isPresent() || centralUsername.get().isEmpty()
+                    || !centralPassword.isPresent() || centralPassword.get().isEmpty()) {
+                throw new GradleException('Central staging requires MAVEN_CENTRAL_USERNAME and ' +
+                        'MAVEN_CENTRAL_PASSWORD (or private ~/.gradle/gradle.properties values).')
+            }
+            maven {
+                name = 'CentralPortalStaging'
+                url = uri('https://ossrh-staging-api.central.sonatype.com/' +
+                        'service/local/staging/deploy/maven2/')
+                credentials {
+                    username = centralUsername.get()
+                    password = centralPassword.get()
+                }
+            }
+        }
+    }
+}
+
+def centralSigningRequested = centralOutputRequested
+if (centralSigningRequested) {
+    def signingKeyBase64 = providers.environmentVariable('MAVEN_GPG_PRIVATE_KEY_BASE64')
+            .orElse(providers.gradleProperty('signingKeyBase64'))
+    def signingKey = providers.environmentVariable('MAVEN_GPG_PRIVATE_KEY')
+            .orElse(providers.gradleProperty('signingKey'))
+            .orElse(signingKeyBase64.map {
+                new String(Base64.decoder.decode(it), 'UTF-8')
+            })
+    def signingPassword = providers.environmentVariable('MAVEN_GPG_PASSWORD')
+            .orElse(providers.gradleProperty('signingPassword'))
+    def signingKeyId = providers.environmentVariable('MAVEN_GPG_KEY_ID')
+            .orElse(providers.gradleProperty('signingKeyId'))
+
+    if (!signingKey.isPresent() || signingKey.get().isEmpty()
+            || !signingPassword.isPresent() || signingPassword.get().isEmpty()) {
+        throw new GradleException('Maven Central output requires MAVEN_GPG_PRIVATE_KEY and ' +
+                'MAVEN_GPG_PASSWORD (or private ~/.gradle/gradle.properties values).')
+    }
+
+    signing {
+        required = true
+        if (signingKeyId.isPresent()) {
+            useInMemoryPgpKeys(signingKeyId.get(), signingKey.get(), signingPassword.get())
+        } else {
+            useInMemoryPgpKeys(signingKey.get(), signingPassword.get())
+        }
+        sign publishing.publications
+    }
+}
+
+// With the built-in maven-publish plugin, Sonatype requires an explicit hand-off from the
+// compatibility staging service to Central Portal. This task stages a USER_MANAGED deployment;
+// it never performs the final immutable publication to Maven Central.
+if (centralPublishingEnabled) {
+    def verifyCentralRelease = tasks.register('verifyCentralRelease') {
+        group = 'verification'
+        description = 'Requires a clean Git checkout tagged for the immutable Central version.'
+        doLast {
+            def runGit = { List<String> arguments ->
+                def process = new ProcessBuilder((['git'] + arguments) as List<String>)
+                        .directory(rootDir)
+                        .redirectErrorStream(true)
+                        .start()
+                String output = process.inputStream.getText('UTF-8').trim()
+                int status = process.waitFor()
+                if (status != 0) {
+                    throw new GradleException("Cannot verify Central release Git state: ${output}")
+                }
+                output
+            }
+
+            if (runGit(['rev-parse', '--is-inside-work-tree']) != 'true') {
+                throw new GradleException('Central staging requires a Git worktree')
+            }
+            String dirtyFiles = runGit(['status', '--porcelain', '--untracked-files=all', '--', '.'])
+            if (!dirtyFiles.isEmpty()) {
+                throw new GradleException('Central staging requires a clean worktree; commit or ' +
+                        'remove all tracked and untracked changes first')
+            }
+            Set<String> headTags = runGit(['tag', '--points-at', 'HEAD'])
+                    .readLines()
+                    .collect { it.trim() }
+                    .findAll { !it.isEmpty() }
+                    .toSet()
+            if (!headTags.contains("v${pomVersion}")) {
+                throw new GradleException("Central staging requires HEAD tag v${pomVersion}")
+            }
+        }
+    }
+
+    tasks.withType(PublishToMavenRepository).configureEach {
+        if (repository.name == 'CentralPortalStaging') {
+            dependsOn(verifyCentralRelease)
+        }
+    }
+
+    tasks.register('stageCentralPortalDeployment') {
+        group = 'publishing'
+        description = 'Uploads signed publications to Central Portal for manual review.'
+        notCompatibleWithConfigurationCache('Performs an authenticated network hand-off.')
+        dependsOn(verifyCentralRelease)
+        dependsOn(tasks.withType(PublishToMavenRepository).matching {
+            it.repository.name == 'CentralPortalStaging'
+        })
+
+        doLast {
+            def encodedCredentials = "${centralUsername.get()}:${centralPassword.get()}"
+                    .getBytes('UTF-8').encodeBase64().toString()
+            def endpoint = new URL('https://ossrh-staging-api.central.sonatype.com/' +
+                    "manual/upload/defaultRepository/${centralNamespace}" +
+                    '?publishing_type=user_managed')
+            def connection = endpoint.openConnection()
+            connection.requestMethod = 'POST'
+            connection.doOutput = true
+            connection.setRequestProperty('Authorization', "Bearer ${encodedCredentials}")
+            connection.setRequestProperty('Accept', 'application/json')
+            connection.connectTimeout = 30_000
+            connection.readTimeout = 120_000
+            connection.outputStream.withCloseable { }
+            def status = connection.responseCode
+            if (status < 200 || status >= 300) {
+                String responseBody = connection.errorStream == null
+                        ? '' : connection.errorStream.getText('UTF-8')
+                String safeBody = responseBody.replaceAll(/[\r\n\t]+/, ' ').trim()
+                        .replace(centralUsername.get(), '[redacted]')
+                        .replace(centralPassword.get(), '[redacted]')
+                if (safeBody.length() > 512) safeBody = safeBody.substring(0, 512)
+                throw new GradleException("Central Portal staging hand-off failed (HTTP ${status}). " +
+                        "${safeBody.isEmpty() ? '' : safeBody + ' '}" +
+                        'Inspect the deployment in Central Portal; credentials are never logged. ' +
+                        'If the request timed out or its state is unclear, inspect Portal/search ' +
+                        'before retrying.')
+            }
+            logger.lifecycle('Signed artifacts are staged in Central Portal for manual review; ' +
+                    'no immutable release was published.')
+        }
+    }
+}
+
+tasks.register('printMavenCentralCoordinates') {
+    group = 'help'
+    description = 'Prints the canonical implementation and Gradle plugin marker coordinates.'
+    doLast {
+        println("group=${pomGroupId}")
+        println("artifact=${pomArtifactId}")
+        println("version=${pomVersion}")
+        println("pluginId=${publicPluginId}")
     }
 }

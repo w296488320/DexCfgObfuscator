@@ -304,25 +304,25 @@ public class CfgFlattenerTest {
         Path mapping = Files.createTempFile("dex-cfg-obf-r8-", ".txt");
         try {
             Files.write(mapping, java.util.Arrays.asList(
-                    "com.example.Secret -> YouAreLoser.a:",
+                    "com.example.Secret -> obfuscated.a:",
                     "    1:1:void run():1:1 -> a",
-                    "third.party.Library -> YouAreLoser.b:",
-                    "com.examples.Adjacent -> YouAreLoser.c:",
+                    "third.party.Library -> obfuscated.b:",
+                    "com.examples.Adjacent -> obfuscated.c:",
                     "com.example.Kept -> com.example.Kept:",
                     "com.example.hunter.NativeEngine -> com.example.hunter.NativeEngine:",
-                    "com.example.hunter.NativeEngineHelper -> YouAreLoser.d:"
+                    "com.example.hunter.NativeEngineHelper -> obfuscated.d:"
             ), StandardCharsets.UTF_8);
             ObfuscatorConfig cfg = new ObfuscatorConfig();
             cfg.includePrefixes.add("com/example");
             cfg.excludePrefixes.add("com/example/hunter/NativeEngine");
 
             assertEquals(3, R8MappingResolver.apply(mapping.toFile(), cfg));
-            assertTrue(cfg.shouldProcessClass("LYouAreLoser/a;"));
+            assertTrue(cfg.shouldProcessClass("Lobfuscated/a;"));
             assertTrue(cfg.shouldProcessClass("Lcom/example/Kept;"));
-            assertFalse(cfg.shouldProcessClass("LYouAreLoser/b;"));
-            assertFalse(cfg.shouldProcessClass("LYouAreLoser/c;"));
+            assertFalse(cfg.shouldProcessClass("Lobfuscated/b;"));
+            assertFalse(cfg.shouldProcessClass("Lobfuscated/c;"));
             assertFalse(cfg.shouldProcessClass("Lcom/example/hunter/NativeEngine;"));
-            assertTrue(cfg.shouldProcessClass("LYouAreLoser/d;"));
+            assertTrue(cfg.shouldProcessClass("Lobfuscated/d;"));
 
             ObfuscatorConfig direct = new ObfuscatorConfig();
             direct.includePrefixes.add("com/example/");
@@ -339,7 +339,7 @@ public class CfgFlattenerTest {
     }
 
     /**
-     * 构造含 fill-array-data 的方法（StringFog 加密字符串后的典型形态：new byte[]{...}）：
+     * 构造含 fill-array-data 的方法（内置字符串加密后的典型形态：new byte[]{...}）：
      *   0: const/4 v0, 0
      *   1: if-eqz v0, L_a        ; -> 4
      *   2: const/4 v0, 3

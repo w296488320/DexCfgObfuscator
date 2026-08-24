@@ -506,6 +506,19 @@ public class StringPlaintextVerifierTest {
     }
 
     @Test
+    public void completelyEmptyProtectedScopeIsAValidVerifiedResult() throws Exception {
+        StringPlaintextVerifier.Result result = StringPlaintextVerifier.verifyDexDirectories(
+                Collections.emptyList(), Collections.emptySet(), Collections.emptyMap(),
+                Collections.emptyMap(), Collections.emptyMap(), Collections.emptySet(),
+                Collections.emptySet(), Collections.emptySet(), false);
+
+        assertEquals(0, result.plaintextHashesTracked);
+        assertEquals(0, result.plaintextLeaks);
+        assertEquals(0, result.targetClassesResolved);
+        assertEquals(0, result.targetMethodsResolved);
+    }
+
+    @Test
     public void identityFieldProvenanceRequiresExactFinalOwnerNameAndStringDescriptor()
             throws Exception {
         String owner = "Lfixture/Identity;";

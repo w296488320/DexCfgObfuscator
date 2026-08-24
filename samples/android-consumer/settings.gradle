@@ -1,0 +1,21 @@
+pluginManagement {
+    // Resolve the plugin directly from this source checkout. The sample never depends on
+    // mavenLocal() or the repository's generated maven-repo/ directory.
+    includeBuild('../..')
+    repositories {
+        google()
+        mavenCentral()
+        gradlePluginPortal()
+    }
+}
+
+dependencyResolutionManagement {
+    repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+    repositories {
+        google()
+        mavenCentral()
+    }
+}
+
+rootProject.name = 'dexcfg-android-consumer-sample'
+include ':app'

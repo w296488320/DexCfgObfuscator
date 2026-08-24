@@ -58,6 +58,11 @@ public final class BuildEvidenceStore {
     private BuildEvidenceStore() {
     }
 
+    /** Defensive stats snapshot for evidence that must be committed after a later artifact gate. */
+    public static ObfuscatorStats snapshotStats(ObfuscatorStats source) {
+        return copyStats(Objects.requireNonNull(source, "source"));
+    }
+
     /** Stable per-DEX-directory evidence filename below the supplied intermediates root. */
     public static File cfgEvidenceFile(File evidenceRoot, File dexDir) throws IOException {
         Objects.requireNonNull(evidenceRoot, "evidenceRoot");

@@ -127,9 +127,15 @@ public final class StringPlaintextVerifier {
                 removedOriginalSiteHashes, expected);
         Set<String> identityFields = normalizeIdentityFieldProvenanceTargets(
                 identityFieldProvenanceTargets);
-        if (expected.isEmpty()
-                || (targetMethods.isEmpty() && targetFields.isEmpty()
-                && fallbackHashes.isEmpty() && removedHashes.isEmpty())) {
+        if (expected.isEmpty()) {
+            if (!targets.isEmpty() || !targetMethods.isEmpty() || !targetFields.isEmpty()
+                    || !fallbackHashes.isEmpty() || !removedHashes.isEmpty()
+                    || !identityFields.isEmpty()) {
+                throw new IllegalArgumentException(
+                        "empty plaintext scope contains non-empty target provenance");
+            }
+        } else if (targetMethods.isEmpty() && targetFields.isEmpty()
+                && fallbackHashes.isEmpty() && removedHashes.isEmpty()) {
             throw new IllegalArgumentException(
                     "final DEX plaintext verification target site scope is empty; run a clean build");
         }

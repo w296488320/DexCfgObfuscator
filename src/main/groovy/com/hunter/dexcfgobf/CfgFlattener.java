@@ -107,7 +107,7 @@ final class CfgFlattener {
 
         // switch / 大小 预检：直接读原始 Instruction 的 opcode。
         // 含 packed/sparse-switch 的方法跳过（switch payload 有位置/对齐/多目标约束，暂不支持）。
-        // 注意：array-data / fill-array-data **不再**在此跳过——字符串加密(StringFog)会给几乎所有
+        // 注意：array-data / fill-array-data **不再**在此跳过——内置字符串加密会给几乎所有
         // 方法带上 fill-array-data，若此处跳过将导致大量方法完全不混淆。flatten/reorder 现已支持
         // 把 array-data payload 重定位到方法尾部（dexlib2 自动对齐）。
         int insnCount = 0;

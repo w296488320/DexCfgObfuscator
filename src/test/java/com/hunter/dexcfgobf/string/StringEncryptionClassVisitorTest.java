@@ -98,6 +98,8 @@ public class StringEncryptionClassVisitorTest {
         assertEquals(1, snapshot.classesModified);
         assertEquals(0, snapshot.identityCiphertexts);
         assertEquals(Collections.singleton(FIXTURE_BINARY),
+                snapshot.visitedOriginalClassNames);
+        assertEquals(Collections.singleton(FIXTURE_BINARY),
                 snapshot.modifiedOriginalClassNames);
         assertEquals(snapshot.encryptedPlaintextHashes,
                 snapshot.encryptedPlaintextHashesByOriginalClass.get(FIXTURE_BINARY));
@@ -110,6 +112,8 @@ public class StringEncryptionClassVisitorTest {
         assertEquals(Collections.singleton(fieldHash),
                 snapshot.encryptedPlaintextHashesByOriginalField.get(
                         FIXTURE_INTERNAL + "->SECRET"));
+        assertThrows(UnsupportedOperationException.class,
+                () -> snapshot.visitedOriginalClassNames.clear());
         assertThrows(UnsupportedOperationException.class,
                 () -> snapshot.modifiedOriginalClassNames.clear());
         assertThrows(UnsupportedOperationException.class,

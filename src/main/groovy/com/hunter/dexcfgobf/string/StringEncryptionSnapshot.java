@@ -24,6 +24,8 @@ public final class StringEncryptionSnapshot {
     public final int identityCiphertexts;
     /** 仅供最终产物内存校验；不会写入报告。 */
     public final Set<String> encryptedPlaintextHashes;
+    /** 本轮 ASM 实际访问过的原始分类名，包括访问后已无需加密字符串的类。 */
+    public final Set<String> visitedOriginalClassNames;
     /** 本轮确实插入过解密桥调用的原始点分类名。 */
     public final Set<String> modifiedOriginalClassNames;
     /**
@@ -45,6 +47,7 @@ public final class StringEncryptionSnapshot {
                              int skippedTooLarge, int skippedInvalidUnicode, int skippedFiltered,
                              int unsupportedConstants,
                              int identityCiphertexts, Set<String> encryptedPlaintextHashes,
+                             Set<String> visitedOriginalClassNames,
                              Map<String, Set<String>> encryptedPlaintextHashesByOriginalClass,
                              Map<String, Set<String>> encryptedPlaintextHashesByOriginalMethod,
                              Map<String, Set<String>> encryptedPlaintextHashesByOriginalField) {
@@ -62,6 +65,8 @@ public final class StringEncryptionSnapshot {
         this.identityCiphertexts = identityCiphertexts;
         this.encryptedPlaintextHashes = Collections.unmodifiableSet(
                 new TreeSet<>(encryptedPlaintextHashes));
+        this.visitedOriginalClassNames = Collections.unmodifiableSet(
+                new TreeSet<>(visitedOriginalClassNames));
         Map<String, Set<String>> byOwner = new LinkedHashMap<>();
         for (String owner : new TreeSet<>(encryptedPlaintextHashesByOriginalClass.keySet())) {
             byOwner.put(owner, Collections.unmodifiableSet(

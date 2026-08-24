@@ -9,8 +9,10 @@ import com.hunter.dexcfgobf.ObfuscatorStats
 import com.hunter.dexcfgobf.ObfuscationReportWriter
 import com.hunter.dexcfgobf.R8MappingResolver
 import com.android.build.api.artifact.SingleArtifact
+import com.android.build.api.artifact.ScopedArtifact
 import com.android.build.api.instrumentation.FramesComputationMode
 import com.android.build.api.instrumentation.InstrumentationScope
+import com.android.build.api.variant.ScopedArtifacts
 import com.hunter.dexcfgobf.string.GenerateStringDecryptorTask
 import com.hunter.dexcfgobf.string.GenerateStringProtectionRulesTask
 import com.hunter.dexcfgobf.string.StringEncryptionContext
@@ -34,10 +36,16 @@ import javax.inject.Inject
  * 使用（宿主工程 app/build.gradle）：
  *   plugins { id 'com.hunter.dexcfgobf' }
  *   dexControlFlowObfuscator {
- *       enabled true
- *       level ObfuscationLevel.MEDIUM
- *       obfClass = ["com.your.pkg"]
- *       blackClass = []
+ *       dexObfuscator {
+ *           enabled true
+ *           level ObfuscationLevel.MEDIUM
+ *           obfClass = ["com.your.pkg"]
+ *           blackClass = []
+ *       }
+ *       stringEncryption {
+ *           enabled true
+ *           packages = ["com.your.pkg"]
+ *       }
  *   }
  *
  * 原理见 com.hunter.dexcfgobf.CfgFlattener（基本块重排，dexlib2 具名 Label
@@ -82,6 +90,7 @@ class DexCfgObfuscatorPlugin implements Plugin<Project> {
                 throw new GradleException('[dex-cfg-obf] androidComponents extension unavailable')
             }
             androidComponents.onVariants(androidComponents.selector().all()) { variant ->
+                warnLegacyCfgDslOnce(project, ext)
                 String variantName = variant.name
                 String variantCap = capitalize(variantName)
                 String buildTypeName = variant.buildType == null
@@ -104,9 +113,12 @@ class DexCfgObfuscatorPlugin implements Plugin<Project> {
                 if (stringEnabled) {
                     String registryKey = configureStringEncryption(
                             project, variant, ext, variantName, variantCap, false,
-                            false)
+                            false, failOnUnknownCoverage)
+                    TaskProvider<StringClassInventoryTask> classInventory =
+                            registerStringClassInventory(project, variant, variantName, variantCap,
+                                    ScopedArtifacts.Scope.PROJECT)
                     registerLibraryConstantPoolCompaction(project, variantName, variantCap,
-                            registryKey, ext.stringEncryption, variant.minifyEnabled,
+                            registryKey, classInventory, ext.stringEncryption, variant.minifyEnabled,
                             failOnUnknownCoverage)
                 }
             }
@@ -119,12 +131,16 @@ class DexCfgObfuscatorPlugin implements Plugin<Project> {
             }
             // AGP 7+ 正式 Variant API；不再使用 afterEvaluate/applicationVariants。
             androidComponents.onVariants(androidComponents.selector().all()) { variant ->
+                warnLegacyCfgDslOnce(project, ext)
+                DexObfuscatorExtension cfg = ext.dexObfuscator
                 String variantName = variant.name
                 String variantCap = capitalize(variantName)
                 String buildTypeName = variant.buildType == null
                         ? null : variant.buildType.toString()
-                boolean cfgEnabled = isCfgEnabledForVariant(ext.enabled, ext.enabledVariants,
-                        variantName, buildTypeName)
+                // 新模块只有 enabled 开关，true 对全部 application variant 生效。
+                // legacyEnabledVariantsForPlugin 仅为 0.0.15 平铺 DSL 保留一版兼容行为。
+                boolean cfgEnabled = isCfgEnabledForVariant(cfg.enabled,
+                        ext.legacyEnabledVariantsForPlugin(), variantName, buildTypeName)
                 boolean failOnUnknownCoverage = ext.stringEncryption.failOnUnknownCoverage &&
                         isVariantSelected(ext.stringEncryption.failOnUnknownCoverageVariants,
                                 variantName, buildTypeName,
@@ -138,15 +154,19 @@ class DexCfgObfuscatorPlugin implements Plugin<Project> {
                                 ext.stringEncryption.dependencyEvidenceProjects)
                         : Collections.emptyList()
 
-                // 字符串阶段是独立开关：允许 debug 只做字符串保护、release 再做 CFG。
+                // 两个模块独立开关；新 CFG 模块不再内置 variant 过滤。
                 boolean stringEnabled = ext.stringEncryption.enabled &&
                         isVariantSelected(ext.stringEncryption.enabledVariants,
                                 variantName, buildTypeName,
                                 'stringEncryption.enabledVariants')
                 String stringRegistryKey = stringEnabled
                         ? configureStringEncryption(project, variant, ext, variantName, variantCap,
-                                cfgEnabled, true)
+                                cfgEnabled, true, failOnUnknownCoverage)
                         : null
+                TaskProvider<StringClassInventoryTask> stringClassInventory =
+                        stringRegistryKey == null ? null : registerStringClassInventory(
+                                project, variant, variantName, variantCap,
+                                ScopedArtifacts.Scope.ALL)
 
                 if (!dependencyEvidenceProjects.isEmpty() && stringRegistryKey == null) {
                     throw new GradleException('[dex-cfg-obf] stringEncryption.' +
@@ -157,7 +177,8 @@ class DexCfgObfuscatorPlugin implements Plugin<Project> {
                 if (!cfgEnabled) {
                     if (stringRegistryKey != null) {
                         registerStringOnlyVerificationTask(project, variant, ext, variantName,
-                                variantCap, stringRegistryKey, dependencyEvidenceProjects,
+                                variantCap, stringRegistryKey, stringClassInventory,
+                                dependencyEvidenceProjects,
                                 failOnUnknownCoverage)
                     }
                     return
@@ -183,6 +204,7 @@ class DexCfgObfuscatorPlugin implements Plugin<Project> {
                     t.group = 'obfuscation'
                     t.description = "Control-flow obfuscate ${variantName} DEX after its final DEX producer."
                     t.outputs.upToDateWhen { false }
+                    if (stringClassInventory != null) t.dependsOn(stringClassInventory)
                     DexCfgObfuscatorPlugin.configureDependencyEvidenceTaskDependencies(t, project,
                             dependencyEvidenceProjects, variantCap)
                     // 只依赖一个 primary producer，避免某些 AGP 同时暴露 mergeProjectDex 与
@@ -206,21 +228,22 @@ class DexCfgObfuscatorPlugin implements Plugin<Project> {
                                 variantName)
                         project.logger.lifecycle("[dex-cfg-obf] ${variantName}: producer ${producer.name}")
                         ObfuscatorConfig config = new ObfuscatorConfig()
-                        if (ext.level == null) {
-                            throw new GradleException('[dex-cfg-obf] level must not be null')
+                        if (cfg.level == null) {
+                            throw new GradleException(
+                                    '[dex-cfg-obf] dexObfuscator.level must not be null')
                         }
-                        config.depth = ext.level.depth
-                        DexCfgObfuscatorPlugin.applyQualityBudgets(ext, config)
+                        config.depth = cfg.level.depth
+                        DexCfgObfuscatorPlugin.applyQualityBudgets(cfg, config)
                         config.refuseAlreadyObfuscatedInput = true
-                        if (ext.obfClass != null && !ext.obfClass.isEmpty()) {
+                        if (cfg.obfClass != null && !cfg.obfClass.isEmpty()) {
                             config.includePrefixes.clear()
-                            ext.obfClass.each { String c ->
+                            cfg.obfClass.each { String c ->
                                 String p = DexCfgObfuscatorPlugin.toDescriptorPrefix(c)
                                 if (p != null) config.includePrefixes.add(p)
                             }
                         }
-                        if (ext.blackClass != null) {
-                            ext.blackClass.each { String c ->
+                        if (cfg.blackClass != null) {
+                            cfg.blackClass.each { String c ->
                                 String p = DexCfgObfuscatorPlugin.toDescriptorPrefix(c)
                                 if (p != null) config.excludePrefixes.add(p)
                             }
@@ -620,6 +643,14 @@ class DexCfgObfuscatorPlugin implements Plugin<Project> {
                                     Collections.emptyMap()
                             Map<String, Set<String>> plaintextHashesByOriginalField =
                                     Collections.emptyMap()
+                            Set<String> activeOriginalClasses =
+                                    DexCfgObfuscatorPlugin.readStringClassInventory(
+                                            stringClassInventory, variantName)
+                            boolean fullCoverageProven =
+                                    DexCfgObfuscatorPlugin.proveCurrentStringCoverage(
+                                            project, stringRegistryKey, snapshot,
+                                            activeOriginalClasses, variantName,
+                                            failOnUnknownCoverage)
                             if (snapshot.classesVisited == 0) {
                                 Optional<BuildEvidenceStore.StringEvidence> evidence
                                 try {
@@ -648,9 +679,10 @@ class DexCfgObfuscatorPlugin implements Plugin<Project> {
                                     plaintextHashesByOriginalField =
                                             evidence.get().getPlaintextSha256ByOriginalField()
                                     stringStats.stringCoverageStatus =
-                                            DexCfgObfuscatorPlugin.isTrustedFullCoverage(
-                                            evidence.get().getCoverageStatus())
-                                            ? 'CACHED_FULL' : 'CACHED_PARTIAL'
+                                            DexCfgObfuscatorPlugin.
+                                                    restoredApplicationStringCoverageStatus(
+                                                            project,
+                                                            evidence.get().getCoverageStatus())
                                     // Dependency counters are useful in the aggregate report, but
                                     // must never satisfy the application's own quality budget.
                                     DexCfgObfuscatorPlugin.failOnStringQualityIfConfigured(
@@ -688,31 +720,141 @@ class DexCfgObfuscatorPlugin implements Plugin<Project> {
                                             "string evidence bound to the current DEX artifact; " +
                                             "coverage=${stringStats.stringCoverageStatus}")
                                 } else {
-                                    missingStringEvidence = true
-                                    stringStats.stringEncryptionEnabled = true
-                                    stringStats.stringEncryptionMode = snapshot.mode
-                                    stringStats.stringCoverageStatus = 'UNKNOWN_INCREMENTAL'
-                                    project.logger.warn("[dex-cfg-obf] ${variantName}: no string evidence " +
-                                            "matches the current DEX/configuration; strict gates require " +
-                                            "a clean --rerun-tasks build")
+                                    Optional<BuildEvidenceStore.StringEvidence> priorEvidence
+                                    try {
+                                        priorEvidence = BuildEvidenceStore.readString(
+                                                stringEvidenceFile)
+                                    } catch (Exception evidenceFailure) {
+                                        throw new GradleException("[dex-cfg-obf] ${variantName}: " +
+                                                "prior string evidence is corrupt/unreadable; run " +
+                                                "clean with --rerun-tasks", evidenceFailure)
+                                    }
+                                    boolean verifiedEmptyFullBuild =
+                                            !priorEvidence.isPresent() &&
+                                            fullCoverageProven
+                                    if (!priorEvidence.isPresent() && !verifiedEmptyFullBuild) {
+                                        missingStringEvidence = true
+                                        throw new GradleException("[dex-cfg-obf] ${variantName}: " +
+                                                "no prior string evidence is available for the " +
+                                                "changed final DEX; run clean with --rerun-tasks")
+                                    }
+                                    DexCfgObfuscatorPlugin.
+                                            requireExecutedAsmTransformForZeroVisitReconciliation(
+                                                    project, variantCap, variantName)
+                                    StringEvidenceScope reconciled =
+                                            DexCfgObfuscatorPlugin.mergePriorStringEvidence(project,
+                                                    stringEvidenceFile, stringDigest,
+                                                    Collections.emptySet(), Collections.emptySet(),
+                                                    activeOriginalClasses, Collections.emptyMap(),
+                                                    Collections.emptyMap(), Collections.emptyMap(),
+                                                    ext.stringEncryption.maxUnsafeSkippedStrings,
+                                                    ext.stringEncryption.maxFilteredStrings,
+                                                    variantName, 'application DEX',
+                                                    fullCoverageProven)
+                                    currentStringEvidence = true
+                                    if (priorEvidence.isPresent()) {
+                                        stringStats = priorEvidence.get().getStats()
+                                    } else {
+                                        snapshot.applyTo(stringStats)
+                                    }
+                                    DexCfgObfuscatorPlugin.applyReconciledStringScopeStats(
+                                            stringStats, reconciled, project,
+                                            fullCoverageProven)
+                                    plaintextHashes = reconciled.plaintextHashes
+                                    plaintextHashesByOriginalClass =
+                                            reconciled.plaintextHashesByOriginalClass
+                                    plaintextHashesByOriginalMethod =
+                                            reconciled.plaintextHashesByOriginalMethod
+                                    plaintextHashesByOriginalField =
+                                            reconciled.plaintextHashesByOriginalField
+                                    DexCfgObfuscatorPlugin.applyStringConfigurationToStats(
+                                            ext.stringEncryption, stringStats,
+                                            failOnUnknownCoverage)
+                                    stringStats.artifactFingerprint = auditFingerprint
+                                    stringStats.stringTransformDigest = stringDigest
+                                    stringStats.evidenceSource = priorEvidence.isPresent()
+                                            ? 'RECONCILED_INCREMENTAL' : 'CURRENT_BUILD'
+                                    if (ext.stringEncryption.verifyFinalDex) {
+                                        FinalStringScope applicationFinalScope =
+                                                DexCfgObfuscatorPlugin.resolveFinalStringScope(
+                                                        plaintextHashes,
+                                                        plaintextHashesByOriginalClass,
+                                                        plaintextHashesByOriginalMethod,
+                                                        plaintextHashesByOriginalField,
+                                                        useR8Mapping, r8MappingFile, variantName)
+                                        DexCfgObfuscatorPlugin.applyFinalStringClassificationStats(
+                                                applicationFinalScope, stringStats)
+                                    }
+                                    ObfuscatorStats evidenceStats =
+                                            BuildEvidenceStore.snapshotStats(stringStats)
+                                    DexCfgObfuscatorPlugin.failOnStringQualityIfConfigured(
+                                            ext.stringEncryption, stringStats, variantName,
+                                            failOnUnknownCoverage)
+                                    StringEvidenceScope aggregateScope =
+                                            DexCfgObfuscatorPlugin.mergeDependencyStringEvidence(
+                                                    project, dependencyEvidenceProjects,
+                                                    variantName, variantCap, reconciled,
+                                                    stringStats, failOnUnknownCoverage,
+                                                    ext.stringEncryption.maxUnsafeSkippedStrings,
+                                                    ext.stringEncryption.maxFilteredStrings)
+                                    plaintextHashes = aggregateScope.plaintextHashes
+                                    plaintextHashesByOriginalClass =
+                                            aggregateScope.plaintextHashesByOriginalClass
+                                    plaintextHashesByOriginalMethod =
+                                            aggregateScope.plaintextHashesByOriginalMethod
+                                    plaintextHashesByOriginalField =
+                                            aggregateScope.plaintextHashesByOriginalField
+                                    DexCfgObfuscatorPlugin.resetStringVerificationStats(
+                                            stringStats, plaintextHashes.size())
+                                    DexCfgObfuscatorPlugin.verifyFinalDexStrings(
+                                            ext.stringEncryption, plaintextHashes,
+                                            plaintextHashesByOriginalClass,
+                                            plaintextHashesByOriginalMethod,
+                                            plaintextHashesByOriginalField, stringAuditDexDirs,
+                                            stringStats, variantName, project, useR8Mapping,
+                                            r8MappingFile)
+                                    DexCfgObfuscatorPlugin.failOnPlaintextLeakIfConfigured(
+                                            ext.stringEncryption, stringStats, variantName)
+                                    try {
+                                        BuildEvidenceStore.writeString(stringEvidenceFile,
+                                                auditFingerprint, stringDigest, evidenceStats,
+                                                reconciled.plaintextHashes,
+                                                reconciled.plaintextHashesByOriginalClass,
+                                                reconciled.plaintextHashesByOriginalMethod,
+                                                reconciled.plaintextHashesByOriginalField)
+                                    } catch (Exception evidenceFailure) {
+                                        throw new GradleException("[dex-cfg-obf] ${variantName}: " +
+                                                "cannot rebind verified incremental string " +
+                                                "evidence", evidenceFailure)
+                                    }
+                                    project.logger.lifecycle(priorEvidence.isPresent()
+                                            ? "[dex-cfg-obf] ${variantName}: reconciled prior " +
+                                            "string evidence with the current AGP scoped class " +
+                                            "inventory and rebound it after the final DEX " +
+                                            "plaintext gate"
+                                            : "[dex-cfg-obf] ${variantName}: verified and bound " +
+                                            "an empty full-build string scope after the final DEX " +
+                                            "plaintext gate")
                                 }
                             } else {
                                 currentStringEvidence = true
                                 snapshot.applyTo(stringStats)
-                                if (!DexCfgObfuscatorPlugin.isFullStringCoverageBuild(project)
-                                        || DexCfgObfuscatorPlugin.hasDynamicFeatures(project)) {
+                                if (!fullCoverageProven) {
                                     stringStats.stringCoverageStatus = 'PARTIAL_OR_FULL'
                                 }
                                 StringEvidenceScope scope =
                                         DexCfgObfuscatorPlugin.mergePriorStringEvidence(project,
                                         stringEvidenceFile, stringDigest,
                                         snapshot.encryptedPlaintextHashes,
+                                        snapshot.visitedOriginalClassNames,
+                                        activeOriginalClasses,
                                         snapshot.encryptedPlaintextHashesByOriginalClass,
                                         snapshot.encryptedPlaintextHashesByOriginalMethod,
                                         snapshot.encryptedPlaintextHashesByOriginalField,
                                         ext.stringEncryption.maxUnsafeSkippedStrings,
                                         ext.stringEncryption.maxFilteredStrings,
-                                        variantName, 'application DEX')
+                                        variantName, 'application DEX',
+                                        fullCoverageProven)
                                 plaintextHashes = scope.plaintextHashes
                                 plaintextHashesByOriginalClass =
                                         scope.plaintextHashesByOriginalClass
@@ -736,18 +878,8 @@ class DexCfgObfuscatorPlugin implements Plugin<Project> {
                                     DexCfgObfuscatorPlugin.applyFinalStringClassificationStats(
                                             applicationFinalScope, stringStats)
                                 }
-                                try {
-                                    BuildEvidenceStore.writeString(stringEvidenceFile,
-                                            auditFingerprint, stringDigest, stringStats,
-                                            plaintextHashes,
-                                            plaintextHashesByOriginalClass,
-                                            plaintextHashesByOriginalMethod,
-                                            plaintextHashesByOriginalField)
-                                } catch (Exception evidenceFailure) {
-                                    throw new GradleException("[dex-cfg-obf] ${variantName}: cannot " +
-                                            "persist string verification evidence; refusing an " +
-                                            "incrementally unverifiable artifact", evidenceFailure)
-                                }
+                                ObfuscatorStats evidenceStats =
+                                        BuildEvidenceStore.snapshotStats(stringStats)
                                 // Enforce the application transform before dependency evidence is
                                 // merged, otherwise library counts could mask a local regression.
                                 DexCfgObfuscatorPlugin.failOnStringQualityIfConfigured(
@@ -779,6 +911,20 @@ class DexCfgObfuscatorPlugin implements Plugin<Project> {
                                         plaintextHashesByOriginalField, stringAuditDexDirs,
                                         stringStats, variantName, project, useR8Mapping,
                                         r8MappingFile)
+                                DexCfgObfuscatorPlugin.failOnPlaintextLeakIfConfigured(
+                                        ext.stringEncryption, stringStats, variantName)
+                                try {
+                                    BuildEvidenceStore.writeString(stringEvidenceFile,
+                                            auditFingerprint, stringDigest, evidenceStats,
+                                            scope.plaintextHashes,
+                                            scope.plaintextHashesByOriginalClass,
+                                            scope.plaintextHashesByOriginalMethod,
+                                            scope.plaintextHashesByOriginalField)
+                                } catch (Exception evidenceFailure) {
+                                    throw new GradleException("[dex-cfg-obf] ${variantName}: cannot " +
+                                            "persist verified string evidence; refusing an " +
+                                            "incrementally unverifiable artifact", evidenceFailure)
+                                }
                                 project.logger.lifecycle("[dex-cfg-obf] ${variantName}: encrypted " +
                                         "${snapshot.constantsEncrypted} string constant(s) in " +
                                         "${snapshot.classesModified} class(es), mode=${snapshot.mode}, " +
@@ -829,15 +975,16 @@ class DexCfgObfuscatorPlugin implements Plugin<Project> {
                         DexCfgObfuscatorPlugin.enforceVariantStringGates(
                                 stringRegistryKey != null, ext.stringEncryption, config,
                                 combinedStats, variantName, failOnUnknownCoverage)
-                        if (ext.adversarialCommands != null && !ext.adversarialCommands.isEmpty()) {
+                        if (cfg.adversarialCommands != null &&
+                                !cfg.adversarialCommands.isEmpty()) {
                             if (reportFile == null || !reportFile.isFile()) {
                                 throw new GradleException("[dex-cfg-obf] ${variantName}: adversarialCommands " +
                                         "requires an existing report; run a pristine build first")
                             }
                             // 即使 CFG 目录指纹未变化，也必须重新运行刚配置或更新的 JADX/恢复器。
                             DexCfgObfuscatorPlugin.runAdversarialCommands(
-                                    ext.adversarialCommands, dexDirs, reportFile, variantName,
-                                    ext.adversarialTimeoutSeconds, project)
+                                    cfg.adversarialCommands, dexDirs, reportFile, variantName,
+                                    cfg.adversarialTimeoutSeconds, project)
                         }
                         transactionFreshDexDirs.each { String canonicalDir ->
                             File freshDir = dexDirs.find { File candidate ->
@@ -901,6 +1048,8 @@ class DexCfgObfuscatorPlugin implements Plugin<Project> {
                                                            String variantName,
                                                            String variantCap,
                                                            String registryKey,
+                                                           TaskProvider<StringClassInventoryTask>
+                                                                   stringClassInventory,
                                                            List<String> dependencyEvidenceProjects,
                                                            boolean failOnUnknownCoverage) {
         String r8Name = "minify${variantCap}WithR8"
@@ -917,6 +1066,7 @@ class DexCfgObfuscatorPlugin implements Plugin<Project> {
             task.group = 'verification'
             task.description = "Verify ${variantName} final DEX does not retain encrypted plaintext."
             task.outputs.upToDateWhen { false }
+            task.dependsOn(stringClassInventory)
             DexCfgObfuscatorPlugin.configureDependencyEvidenceTaskDependencies(task, project,
                     dependencyEvidenceProjects, variantCap)
             task.dependsOn({ ignored -> DexCfgObfuscatorPlugin.requirePrimaryDexProducer(
@@ -979,6 +1129,13 @@ class DexCfgObfuscatorPlugin implements Plugin<Project> {
                 Map<String, Set<String>> plaintextHashesByOriginalField =
                         Collections.emptyMap()
                 String evidenceSource = 'MISSING'
+                Set<String> activeOriginalClasses =
+                        DexCfgObfuscatorPlugin.readStringClassInventory(
+                                stringClassInventory, variantName)
+                boolean fullCoverageProven =
+                        DexCfgObfuscatorPlugin.proveCurrentStringCoverage(
+                                project, registryKey, snapshot, activeOriginalClasses,
+                                variantName, failOnUnknownCoverage)
                 if (snapshot.classesVisited == 0) {
                     Optional<BuildEvidenceStore.StringEvidence> evidence
                     try {
@@ -1005,9 +1162,9 @@ class DexCfgObfuscatorPlugin implements Plugin<Project> {
                                 evidence.get().getPlaintextSha256ByOriginalMethod()
                         plaintextHashesByOriginalField =
                                 evidence.get().getPlaintextSha256ByOriginalField()
-                        stats.stringCoverageStatus = DexCfgObfuscatorPlugin.isTrustedFullCoverage(
-                                evidence.get().getCoverageStatus())
-                                ? 'CACHED_FULL' : 'CACHED_PARTIAL'
+                        stats.stringCoverageStatus = DexCfgObfuscatorPlugin.
+                                restoredApplicationStringCoverageStatus(
+                                        project, evidence.get().getCoverageStatus())
                         // Keep application quality thresholds local; dependency evidence is
                         // aggregated only for the final APK plaintext gate and report.
                         DexCfgObfuscatorPlugin.failOnStringQualityIfConfigured(
@@ -1042,29 +1199,116 @@ class DexCfgObfuscatorPlugin implements Plugin<Project> {
                                 "evidence bound to the current DEX artifact; " +
                                 "coverage=${stats.stringCoverageStatus}")
                     } else {
-                        stats.stringEncryptionEnabled = true
-                        stats.stringEncryptionMode = snapshot.mode
-                        stats.stringCoverageStatus = 'UNKNOWN_INCREMENTAL'
-                        project.logger.warn("[dex-cfg-obf] ${variantName}: no string evidence " +
-                                "matches the current DEX/configuration; strict gates require " +
-                                "a clean --rerun-tasks build")
+                        Optional<BuildEvidenceStore.StringEvidence> priorEvidence
+                        try {
+                            priorEvidence = BuildEvidenceStore.readString(evidenceFile)
+                        } catch (Exception evidenceFailure) {
+                            throw new GradleException("[dex-cfg-obf] ${variantName}: prior string " +
+                                    "evidence is corrupt/unreadable; run a clean --rerun-tasks " +
+                                    "build", evidenceFailure)
+                        }
+                        boolean verifiedEmptyFullBuild = !priorEvidence.isPresent() &&
+                                fullCoverageProven
+                        if (!priorEvidence.isPresent() && !verifiedEmptyFullBuild) {
+                            throw new GradleException("[dex-cfg-obf] ${variantName}: no prior " +
+                                    "string evidence is available for the changed final DEX; " +
+                                    "run clean with --rerun-tasks")
+                        }
+                        DexCfgObfuscatorPlugin.
+                                requireExecutedAsmTransformForZeroVisitReconciliation(
+                                        project, variantCap, variantName)
+                        StringEvidenceScope reconciled =
+                                DexCfgObfuscatorPlugin.mergePriorStringEvidence(project,
+                                        evidenceFile, stringDigest, Collections.emptySet(),
+                                        Collections.emptySet(), activeOriginalClasses,
+                                        Collections.emptyMap(), Collections.emptyMap(),
+                                        Collections.emptyMap(),
+                                        ext.stringEncryption.maxUnsafeSkippedStrings,
+                                        ext.stringEncryption.maxFilteredStrings,
+                                        variantName, 'application DEX',
+                                        fullCoverageProven)
+                        evidenceSource = priorEvidence.isPresent()
+                                ? 'RECONCILED_INCREMENTAL' : 'CURRENT_BUILD'
+                        if (priorEvidence.isPresent()) {
+                            stats = priorEvidence.get().getStats()
+                        } else {
+                            snapshot.applyTo(stats)
+                        }
+                        DexCfgObfuscatorPlugin.applyReconciledStringScopeStats(
+                                stats, reconciled, project, fullCoverageProven)
+                        plaintextHashes = reconciled.plaintextHashes
+                        plaintextHashesByOriginalClass =
+                                reconciled.plaintextHashesByOriginalClass
+                        plaintextHashesByOriginalMethod =
+                                reconciled.plaintextHashesByOriginalMethod
+                        plaintextHashesByOriginalField =
+                                reconciled.plaintextHashesByOriginalField
+                        DexCfgObfuscatorPlugin.applyStringConfigurationToStats(
+                                ext.stringEncryption, stats, failOnUnknownCoverage)
+                        stats.artifactFingerprint = auditFingerprint
+                        stats.stringTransformDigest = stringDigest
+                        stats.evidenceSource = evidenceSource
+                        ObfuscatorStats evidenceStats = BuildEvidenceStore.snapshotStats(stats)
+                        DexCfgObfuscatorPlugin.failOnStringQualityIfConfigured(
+                                ext.stringEncryption, stats, variantName,
+                                failOnUnknownCoverage)
+                        StringEvidenceScope aggregateScope =
+                                DexCfgObfuscatorPlugin.mergeDependencyStringEvidence(
+                                        project, dependencyEvidenceProjects, variantName,
+                                        variantCap, reconciled, stats, failOnUnknownCoverage,
+                                        ext.stringEncryption.maxUnsafeSkippedStrings,
+                                        ext.stringEncryption.maxFilteredStrings)
+                        plaintextHashes = aggregateScope.plaintextHashes
+                        plaintextHashesByOriginalClass =
+                                aggregateScope.plaintextHashesByOriginalClass
+                        plaintextHashesByOriginalMethod =
+                                aggregateScope.plaintextHashesByOriginalMethod
+                        plaintextHashesByOriginalField =
+                                aggregateScope.plaintextHashesByOriginalField
+                        DexCfgObfuscatorPlugin.resetStringVerificationStats(
+                                stats, plaintextHashes.size())
+                        DexCfgObfuscatorPlugin.verifyFinalDexStrings(
+                                ext.stringEncryption, plaintextHashes,
+                                plaintextHashesByOriginalClass,
+                                plaintextHashesByOriginalMethod,
+                                plaintextHashesByOriginalField, stringAuditDexDirs, stats,
+                                variantName, project, useR8, r8MappingFile)
+                        DexCfgObfuscatorPlugin.failOnPlaintextLeakIfConfigured(
+                                ext.stringEncryption, stats, variantName)
+                        try {
+                            BuildEvidenceStore.writeString(evidenceFile, auditFingerprint,
+                                    stringDigest, evidenceStats, reconciled.plaintextHashes,
+                                    reconciled.plaintextHashesByOriginalClass,
+                                    reconciled.plaintextHashesByOriginalMethod,
+                                    reconciled.plaintextHashesByOriginalField)
+                        } catch (Exception evidenceFailure) {
+                            throw new GradleException("[dex-cfg-obf] ${variantName}: cannot " +
+                                    "rebind verified incremental string evidence", evidenceFailure)
+                        }
+                        project.logger.lifecycle(priorEvidence.isPresent()
+                                ? "[dex-cfg-obf] ${variantName}: reconciled prior string " +
+                                "evidence with the current AGP scoped class inventory and rebound " +
+                                "it after the final DEX plaintext gate"
+                                : "[dex-cfg-obf] ${variantName}: verified and bound an empty " +
+                                "full-build string scope after the final DEX plaintext gate")
                     }
                 } else {
                     evidenceSource = 'CURRENT_BUILD'
                     snapshot.applyTo(stats)
-                    if (!DexCfgObfuscatorPlugin.isFullStringCoverageBuild(project)
-                            || DexCfgObfuscatorPlugin.hasDynamicFeatures(project)) {
+                    if (!fullCoverageProven) {
                         stats.stringCoverageStatus = 'PARTIAL_OR_FULL'
                     }
                     StringEvidenceScope scope = DexCfgObfuscatorPlugin.mergePriorStringEvidence(
                             project, evidenceFile,
                             stringDigest, snapshot.encryptedPlaintextHashes,
+                            snapshot.visitedOriginalClassNames,
+                            activeOriginalClasses,
                             snapshot.encryptedPlaintextHashesByOriginalClass,
                             snapshot.encryptedPlaintextHashesByOriginalMethod,
                             snapshot.encryptedPlaintextHashesByOriginalField,
                             ext.stringEncryption.maxUnsafeSkippedStrings,
                             ext.stringEncryption.maxFilteredStrings,
-                            variantName, 'application DEX')
+                            variantName, 'application DEX', fullCoverageProven)
                     plaintextHashes = scope.plaintextHashes
                     plaintextHashesByOriginalClass = scope.plaintextHashesByOriginalClass
                     plaintextHashesByOriginalMethod = scope.plaintextHashesByOriginalMethod
@@ -1074,17 +1318,7 @@ class DexCfgObfuscatorPlugin implements Plugin<Project> {
                     stats.artifactFingerprint = auditFingerprint
                     stats.stringTransformDigest = stringDigest
                     stats.evidenceSource = evidenceSource
-                    try {
-                        BuildEvidenceStore.writeString(evidenceFile, auditFingerprint,
-                                stringDigest, stats, plaintextHashes,
-                                plaintextHashesByOriginalClass,
-                                plaintextHashesByOriginalMethod,
-                                plaintextHashesByOriginalField)
-                    } catch (Exception evidenceFailure) {
-                        throw new GradleException("[dex-cfg-obf] ${variantName}: cannot persist " +
-                                "string verification evidence; refusing an incrementally " +
-                                "unverifiable artifact", evidenceFailure)
-                    }
+                    ObfuscatorStats evidenceStats = BuildEvidenceStore.snapshotStats(stats)
                     DexCfgObfuscatorPlugin.failOnStringQualityIfConfigured(
                             ext.stringEncryption, stats, variantName, failOnUnknownCoverage)
                     StringEvidenceScope aggregateScope =
@@ -1112,6 +1346,19 @@ class DexCfgObfuscatorPlugin implements Plugin<Project> {
                             plaintextHashesByOriginalMethod,
                             plaintextHashesByOriginalField, stringAuditDexDirs, stats,
                             variantName, project, useR8, r8MappingFile)
+                    DexCfgObfuscatorPlugin.failOnPlaintextLeakIfConfigured(
+                            ext.stringEncryption, stats, variantName)
+                    try {
+                        BuildEvidenceStore.writeString(evidenceFile, auditFingerprint,
+                                stringDigest, evidenceStats, scope.plaintextHashes,
+                                scope.plaintextHashesByOriginalClass,
+                                scope.plaintextHashesByOriginalMethod,
+                                scope.plaintextHashesByOriginalField)
+                    } catch (Exception evidenceFailure) {
+                        throw new GradleException("[dex-cfg-obf] ${variantName}: cannot persist " +
+                                "verified string evidence; refusing an incrementally " +
+                                "unverifiable artifact", evidenceFailure)
+                    }
                 }
                 DexCfgObfuscatorPlugin.applyStringConfigurationToStats(
                         ext.stringEncryption, stats, failOnUnknownCoverage)
@@ -1122,8 +1369,9 @@ class DexCfgObfuscatorPlugin implements Plugin<Project> {
                 }
                 stats.evidenceSource = evidenceSource
 
+                // CFG 模块关闭时，字符串报告不继承任何 CFG 运行配置。
                 ObfuscatorConfig reportConfig = new ObfuscatorConfig()
-                reportConfig.depth = ext.level == null ? 0 : ext.level.depth
+                reportConfig.depth = 0
                 File reportFile = new File(project.buildDir,
                         "reports/dex-cfg-obfuscator/${variantName}.json")
                 ObfuscationReportWriter.write(reportFile, variantName, reportConfig, stats)
@@ -1133,9 +1381,6 @@ class DexCfgObfuscatorPlugin implements Plugin<Project> {
                         ext.stringEncryption, stats, variantName, failOnUnknownCoverage)
                 DexCfgObfuscatorPlugin.failOnPlaintextLeakIfConfigured(
                         ext.stringEncryption, stats, variantName)
-                DexCfgObfuscatorPlugin.runAdversarialCommands(
-                        ext.adversarialCommands, dexDirs, reportFile, variantName,
-                        ext.adversarialTimeoutSeconds, project)
             }
         }
         project.tasks.matching {
@@ -1148,6 +1393,8 @@ class DexCfgObfuscatorPlugin implements Plugin<Project> {
                                                         String variantName,
                                                         String variantCap,
                                                         String registryKey,
+                                                        TaskProvider<StringClassInventoryTask>
+                                                                stringClassInventory,
                                                         StringEncryptionExtension strings,
                                                         boolean variantMinified,
                                                         boolean failOnUnknownCoverage) {
@@ -1206,6 +1453,7 @@ class DexCfgObfuscatorPlugin implements Plugin<Project> {
             task.group = 'obfuscation'
             task.description = "Verify ${variantName} library class pools after string encryption."
             task.outputs.upToDateWhen { false }
+            task.dependsOn(stringClassInventory)
             task.extensions.extraProperties.set(LIBRARY_EVIDENCE_MINIFIED_PROPERTY,
                     variantMinified)
             task.dependsOn(transforms)
@@ -1261,6 +1509,13 @@ class DexCfgObfuscatorPlugin implements Plugin<Project> {
                 Map<String, Set<String>> plaintextHashesByOriginalField =
                         Collections.emptyMap()
                 String evidenceSource
+                Set<String> activeOriginalClasses =
+                        DexCfgObfuscatorPlugin.readStringClassInventory(
+                                stringClassInventory, variantName)
+                boolean fullCoverageProven =
+                        DexCfgObfuscatorPlugin.proveCurrentStringCoverage(
+                                project, registryKey, snapshot, activeOriginalClasses,
+                                variantName, failOnUnknownCoverage)
                 if (snapshot.classesVisited == 0) {
                     Optional<BuildEvidenceStore.StringEvidence> evidence
                     try {
@@ -1290,6 +1545,9 @@ class DexCfgObfuscatorPlugin implements Plugin<Project> {
                                 DexCfgObfuscatorPlugin.isTrustedFullCoverage(
                                         evidence.get().getCoverageStatus())
                                 ? 'CACHED_FULL' : 'CACHED_PARTIAL'
+                    } else if (fullCoverageProven) {
+                        evidenceSource = 'CURRENT_BUILD'
+                        snapshot.applyTo(stats)
                     } else {
                         evidenceSource = 'MISSING'
                         stats.stringEncryptionEnabled = true
@@ -1304,18 +1562,20 @@ class DexCfgObfuscatorPlugin implements Plugin<Project> {
                 } else {
                     evidenceSource = 'CURRENT_BUILD'
                     snapshot.applyTo(stats)
-                    if (!DexCfgObfuscatorPlugin.isFullStringCoverageBuild(project)) {
+                    if (!fullCoverageProven) {
                         stats.stringCoverageStatus = 'PARTIAL_OR_FULL'
                     }
                     StringEvidenceScope scope = DexCfgObfuscatorPlugin.mergePriorStringEvidence(
                             project, evidenceFile,
                             stringDigest, snapshot.encryptedPlaintextHashes,
+                            snapshot.visitedOriginalClassNames,
+                            activeOriginalClasses,
                             snapshot.encryptedPlaintextHashesByOriginalClass,
                             snapshot.encryptedPlaintextHashesByOriginalMethod,
                             snapshot.encryptedPlaintextHashesByOriginalField,
                             strings.maxUnsafeSkippedStrings,
                             strings.maxFilteredStrings,
-                            variantName, 'library')
+                            variantName, 'library', fullCoverageProven)
                     plaintextHashes = scope.plaintextHashes
                     plaintextHashesByOriginalClass = scope.plaintextHashesByOriginalClass
                     plaintextHashesByOriginalMethod = scope.plaintextHashesByOriginalMethod
@@ -1700,6 +1960,13 @@ class DexCfgObfuscatorPlugin implements Plugin<Project> {
         return 'FULL'.equals(status) || 'CACHED_FULL'.equals(status)
     }
 
+    /** A base-APK evidence snapshot cannot prove coverage for newly present feature-split DEX. */
+    static String restoredApplicationStringCoverageStatus(Project project,
+                                                          String evidenceCoverageStatus) {
+        return isTrustedFullCoverage(evidenceCoverageStatus) && !hasDynamicFeatures(project)
+                ? 'CACHED_FULL' : 'CACHED_PARTIAL'
+    }
+
     private static String weakestStringCoverage(String first, String second) {
         if (!isTrustedFullCoverage(first)) return first
         if (!isTrustedFullCoverage(second)) {
@@ -1896,6 +2163,47 @@ class DexCfgObfuscatorPlugin implements Plugin<Project> {
         return Collections.unmodifiableSet(methods)
     }
 
+    private static TaskProvider<StringClassInventoryTask> registerStringClassInventory(
+            Project project,
+            def variant,
+            String variantName,
+            String variantCap,
+            def scope) {
+        TaskProvider<StringClassInventoryTask> inventory = project.tasks.register(
+                "inventory${variantCap}DexStringClasses", StringClassInventoryTask) { task ->
+            task.group = 'verification'
+            task.description = "Inventory ${variantName} pre-DEX class owners for string evidence."
+            task.ownerInventoryFile.set(project.layout.buildDirectory.file(
+                    "intermediates/dex-cfg-obfuscator-class-inventory/" +
+                            "${variantName}/owners.txt"))
+        }
+        variant.artifacts.forScope(scope).use(inventory).toGet(
+                ScopedArtifact.CLASSES.INSTANCE,
+                { StringClassInventoryTask task -> task.inputJars },
+                { StringClassInventoryTask task -> task.inputDirectories })
+        return inventory
+    }
+
+    private static Set<String> readStringClassInventory(
+            TaskProvider<StringClassInventoryTask> inventory,
+            String variantName) {
+        if (inventory == null) {
+            throw new GradleException("[dex-cfg-obf] ${variantName}: string class inventory " +
+                    'task was not registered')
+        }
+        StringClassInventoryTask task = inventory.get()
+        if (!task.state.executed || task.state.failure != null) {
+            throw new GradleException("[dex-cfg-obf] ${variantName}: string class inventory " +
+                    'did not complete before evidence reconciliation')
+        }
+        try {
+            return StringClassInventoryTask.readOwners(task.ownerInventoryFile.get().asFile)
+        } catch (Exception failure) {
+            throw new GradleException("[dex-cfg-obf] ${variantName}: cannot read the current " +
+                    'AGP scoped-classes owner inventory', failure)
+        }
+    }
+
     /**
      * Derive required decryptor methods from the transformed class artifact, not transient visitor
      * state. The ASM task may be UP-TO-DATE or restored FROM-CACHE, in which case the current
@@ -1906,21 +2214,8 @@ class DexCfgObfuscatorPlugin implements Plugin<Project> {
             String variantCap,
             String variantName,
             String registryKey) {
-        String transformTaskName = "transform${variantCap}ClassesWithAsm"
-        Set<Task> transforms = project.tasks.matching {
-            it.name == transformTaskName
-        }.findAll()
-        if (transforms.size() != 1) {
-            throw new GradleException("[dex-cfg-obf] ${variantName}: expected exactly one " +
-                    "${transformTaskName} task for decryptor usage discovery, found " +
-                    transforms.size())
-        }
-        Task transform = transforms.first()
-        if (!transform.state.executed || transform.state.failure != null) {
-            throw new GradleException("[dex-cfg-obf] ${variantName}: ASM transform task " +
-                    "${transformTaskName} did not complete before decryptor usage discovery")
-        }
-        LinkedHashSet<File> outputs = new LinkedHashSet<>(transform.outputs.files.files)
+        LinkedHashSet<File> outputs = completedAsmTransformOutputs(
+                project, variantCap, variantName, 'decryptor usage discovery')
         try {
             TreeSet<String> methods = new TreeSet<>(StringEncryptionRegistry.
                     requiredDecryptorOriginalMethodKeys(registryKey))
@@ -1931,6 +2226,28 @@ class DexCfgObfuscatorPlugin implements Plugin<Project> {
             throw new GradleException("[dex-cfg-obf] ${variantName}: cannot discover generated " +
                     'decryptor carrier usage from current ASM class outputs', failure)
         }
+    }
+
+    private static LinkedHashSet<File> completedAsmTransformOutputs(
+            Project project,
+            String variantCap,
+            String variantName,
+            String purpose) {
+        String transformTaskName = "transform${variantCap}ClassesWithAsm"
+        Set<Task> transforms = project.tasks.matching {
+            it.name == transformTaskName
+        }.findAll()
+        if (transforms.size() != 1) {
+            throw new GradleException("[dex-cfg-obf] ${variantName}: expected exactly one " +
+                    "${transformTaskName} task for ${purpose}, found " +
+                    transforms.size())
+        }
+        Task transform = transforms.first()
+        if (!transform.state.executed || transform.state.failure != null) {
+            throw new GradleException("[dex-cfg-obf] ${variantName}: ASM transform task " +
+                    "${transformTaskName} did not complete before ${purpose}")
+        }
+        return new LinkedHashSet<>(transform.outputs.files.files)
     }
 
     static void enforceRequiredDecryptorCfg(
@@ -1959,9 +2276,144 @@ class DexCfgObfuscatorPlugin implements Plugin<Project> {
         }
     }
 
-    /** 只有强制重跑才能可靠排除 AGP 增量/远程缓存只访问部分 class 的情况。 */
+    /** 记录用户是否显式要求 Gradle 重跑；严格 variant 还会通过 instrumentation nonce 自动强制全量。 */
     private static boolean isFullStringCoverageBuild(Project project) {
         return project.gradle.startParameter.rerunTasks
+    }
+
+    /**
+     * A strict string gate must not require callers to know about --rerun-tasks. Its changing
+     * instrumentation input forces AGP to execute a non-incremental ASM traversal for this variant.
+     */
+    static boolean isFullStringCoverageInvocation(Project project,
+                                                  boolean forceFullCoverage) {
+        return forceFullCoverage || isFullStringCoverageBuild(project)
+    }
+
+    static String fullCoverageInvocationNonce(Project project,
+                                               boolean forceFullCoverage) {
+        return isFullStringCoverageInvocation(project, forceFullCoverage)
+                ? java.util.UUID.randomUUID().toString()
+                : 'cacheable'
+    }
+
+    /**
+     * The nonce requests a complete traversal; the scoped owner inventory proves that AGP actually
+     * delivered every selected class before the result is allowed to claim FULL coverage.
+     */
+    private static boolean proveCurrentStringCoverage(Project project,
+                                                      String registryKey,
+                                                      StringEncryptionSnapshot snapshot,
+                                                      Set<String> activeOriginalClasses,
+                                                      String variantName,
+                                                      boolean forceFullCoverage) {
+        if (!isFullStringCoverageInvocation(project, forceFullCoverage)
+                || hasDynamicFeatures(project)) {
+            return false
+        }
+        StringEncryptionContext context = StringEncryptionRegistry.require(registryKey)
+        boolean complete = hasCompleteVisitedStringCoverage(context,
+                activeOriginalClasses, snapshot.visitedOriginalClassNames)
+        int selectedOwners = countSelectedStringOwners(context, activeOriginalClasses)
+        if (complete) {
+            project.logger.lifecycle("[dex-cfg-obf] ${variantName}: full string coverage " +
+                    "proven by scoped class inventory (selected=${selectedOwners}, " +
+                    "visited=${snapshot.visitedOriginalClassNames.size()})")
+        } else {
+            project.logger.warn("[dex-cfg-obf] ${variantName}: requested full string coverage " +
+                    "but scoped class inventory does not match ASM visits (selected=" +
+                    "${selectedOwners}, visited=${snapshot.visitedOriginalClassNames.size()}); " +
+                    'keeping coverage fail-closed')
+        }
+        return complete
+    }
+
+    static boolean hasCompleteVisitedStringCoverage(StringEncryptionContext context,
+                                                     Set<String> activeOriginalClasses,
+                                                     Set<String> visitedOriginalClasses) {
+        if (context == null) return false
+        TreeSet<String> expected = new TreeSet<>()
+        (activeOriginalClasses ?: Collections.emptySet()).each { String owner ->
+            if (context.shouldVisitClass(owner)) {
+                expected.add(ObfuscatorConfig.normalizeClassName(owner))
+            }
+        }
+        TreeSet<String> visited = new TreeSet<>()
+        (visitedOriginalClasses ?: Collections.emptySet()).each { String owner ->
+            String normalized = ObfuscatorConfig.normalizeClassName(owner)
+            if (!normalized.isEmpty()) visited.add(normalized)
+        }
+        return expected.equals(visited)
+    }
+
+    private static int countSelectedStringOwners(StringEncryptionContext context,
+                                                 Set<String> activeOriginalClasses) {
+        int count = 0
+        (activeOriginalClasses ?: Collections.emptySet()).each { String owner ->
+            if (context.shouldVisitClass(owner)) count++
+        }
+        return count
+    }
+
+    /**
+     * A changed DEX with an empty in-process snapshot is safe to reconcile only when AGP actually
+     * ran the ASM transform in this invocation. UP-TO-DATE/FROM-CACHE outputs can hide a changed
+     * protected class whose new hashes were never observed by the visitor.
+     */
+    private static void requireExecutedAsmTransformForZeroVisitReconciliation(
+            Project project,
+            String variantCap,
+            String variantName) {
+        String transformTaskName = "transform${variantCap}ClassesWithAsm"
+        Set<Task> transforms = project.tasks.matching {
+            it.name == transformTaskName
+        }.findAll()
+        if (transforms.size() != 1) {
+            throw new GradleException("[dex-cfg-obf] ${variantName}: cannot prove that the " +
+                    "ASM string transform ran for zero-visit evidence reconciliation; expected " +
+                    "exactly one ${transformTaskName} task, found ${transforms.size()}; run " +
+                    'clean with --rerun-tasks')
+        }
+        Task transform = transforms.first()
+        if (!transform.state.executed || transform.state.failure != null ||
+                transform.state.skipped || !transform.state.didWork) {
+            throw new GradleException("[dex-cfg-obf] ${variantName}: changed final DEX has no " +
+                    "current string visits, but ${transformTaskName} was skipped, cached, " +
+                    'up-to-date, or otherwise did no work; run clean with --rerun-tasks')
+        }
+    }
+
+    /** Reconciled evidence has owner/hash lower bounds, never trustworthy prior occurrence totals. */
+    private static void applyReconciledStringScopeStats(
+            ObfuscatorStats stats,
+            StringEvidenceScope scope,
+            Project project) {
+        applyReconciledStringScopeStats(stats, scope, project,
+                isFullStringCoverageBuild(project))
+    }
+
+    private static void applyReconciledStringScopeStats(
+            ObfuscatorStats stats,
+            StringEvidenceScope scope,
+            Project project,
+            boolean fullCurrentCoverage) {
+        stats.stringClassesVisited = 0
+        stats.stringClassesModified = scope.plaintextHashesByOriginalClass.size()
+        stats.stringConstantsEncrypted = scope.plaintextHashes.size()
+        if (fullCurrentCoverage) {
+            // A zero-visit full rerun proves that no selected class contributed an occurrence.
+            // Prior occurrence/skip counters are not owner-scoped and must not survive deletion of
+            // the final protected owner.
+            stats.stringConstantsSkipped = 0
+            stats.stringSkippedWhitespace = 0
+            stats.stringSkippedTooLarge = 0
+            stats.stringSkippedInvalidUnicode = 0
+            stats.stringSkippedFiltered = 0
+            stats.stringUnsupportedConstants = 0
+            stats.stringIdentityCiphertexts = 0
+        }
+        stats.stringCoverageStatus = fullCurrentCoverage
+                ? 'FULL' : 'PARTIAL_OR_FULL'
     }
 
     private static String configureStringEncryption(Project project,
@@ -1970,7 +2422,8 @@ class DexCfgObfuscatorPlugin implements Plugin<Project> {
                                                      String variantName,
                                                      String variantCap,
                                                      boolean cfgEnabled,
-                                                     boolean includeDependencies) {
+                                                     boolean includeDependencies,
+                                                     boolean forceFullCoverage) {
         if (project.gradle.startParameter.configurationCacheRequested) {
             throw new GradleException('[dex-cfg-obf] stringEncryption does not yet support Gradle ' +
                     'configuration cache because custom cipher/key objects are build-process state; ' +
@@ -1981,14 +2434,15 @@ class DexCfgObfuscatorPlugin implements Plugin<Project> {
                     'cannot be enabled together; remove id/apply plugin: stringfog first')
         }
         StringEncryptionExtension strings = ext.stringEncryption
+        DexObfuscatorExtension cfg = ext.dexObfuscator
         validateStringQualityConfiguration(strings)
         // null 才表示继承。显式 [] 很重要：字符串覆盖面和 CFG 覆盖面可能不同，
         // 不能把 CFG 的 verifier/runtime 排除项静默套到字符串阶段。
         List<String> includes = strings.packages == null
-                ? new ArrayList<>(ext.obfClass ?: [])
+                ? new ArrayList<>(cfg.obfClass ?: [])
                 : new ArrayList<>(strings.packages)
         List<String> excludes = strings.excludePackages == null
-                ? new ArrayList<>(ext.blackClass ?: [])
+                ? new ArrayList<>(cfg.blackClass ?: [])
                 : new ArrayList<>(strings.excludePackages)
 
         // variant.namespace 是 finalize-on-read Provider，在 AGP 9 的 onVariants 回调中直接 get()
@@ -2023,9 +2477,9 @@ class DexCfgObfuscatorPlugin implements Plugin<Project> {
                     'the runtime implementation class')
         }
         if (project.plugins.hasPlugin('com.android.application') && cfgEnabled) {
-            warnIfDecryptorMissesCfg(project, ext, bridgeClass, 'generated bridge')
+            warnIfDecryptorMissesCfg(project, cfg, strings, bridgeClass, 'generated bridge')
             if (strings.implementation != null && !strings.implementation.trim().isEmpty()) {
-                warnIfDecryptorMissesCfg(project, ext, strings.implementation.trim(),
+                warnIfDecryptorMissesCfg(project, cfg, strings, strings.implementation.trim(),
                         'custom implementation')
             }
         }
@@ -2085,14 +2539,13 @@ class DexCfgObfuscatorPlugin implements Plugin<Project> {
                 instrumentationScope) { parameters ->
             parameters.registryKey.set(registryKey)
             parameters.fullCoverageInvocationNonce.set(
-                    project.gradle.startParameter.rerunTasks
-                            ? java.util.UUID.randomUUID().toString()
-                            : 'cacheable')
+                    fullCoverageInvocationNonce(project, forceFullCoverage))
         }
         variant.instrumentation.setAsmFramesComputationMode(
                 FramesComputationMode.COMPUTE_FRAMES_FOR_INSTRUMENTED_METHODS)
         project.logger.lifecycle("[dex-cfg-obf] ${variantName}: string encryption enabled, " +
                 "mode=${strings.resolvedMode()}, scope=${instrumentationScope}, " +
+                "fullCoverage=${isFullStringCoverageInvocation(project, forceFullCoverage)}, " +
                 "packages=${includes}, bridge=${bridgeClass}")
         return registryKey
     }
@@ -2159,7 +2612,7 @@ class DexCfgObfuscatorPlugin implements Plugin<Project> {
             if (path.isEmpty() || !path.startsWith(':') || path == ':') {
                 throw new GradleException('[dex-cfg-obf] stringEncryption.' +
                         'dependencyEvidenceProjects entries must be absolute non-root project ' +
-                        "paths such as ':IFAA': ${raw}")
+                        "paths such as ':feature': ${raw}")
             }
             Project dependencyProject = applicationProject.rootProject.findProject(path)
             if (dependencyProject == null) {
@@ -2560,6 +3013,8 @@ class DexCfgObfuscatorPlugin implements Plugin<Project> {
             File evidenceFile,
             String stringDigest,
             Set<String> currentHashes,
+            Set<String> currentVisitedOriginalClasses,
+            Set<String> currentActiveOriginalClasses,
             Map<String, ? extends Set<String>> currentHashesByOriginalClass,
             Map<String, ? extends Set<String>> currentHashesByOriginalMethod,
             Map<String, ? extends Set<String>> currentHashesByOriginalField,
@@ -2567,6 +3022,28 @@ class DexCfgObfuscatorPlugin implements Plugin<Project> {
             int maxFilteredStrings,
             String variantName,
             String artifactLabel) {
+        return mergePriorStringEvidence(project, evidenceFile, stringDigest, currentHashes,
+                currentVisitedOriginalClasses, currentActiveOriginalClasses,
+                currentHashesByOriginalClass, currentHashesByOriginalMethod,
+                currentHashesByOriginalField, maxUnsafeSkippedStrings, maxFilteredStrings,
+                variantName, artifactLabel, isFullStringCoverageBuild(project))
+    }
+
+    private static StringEvidenceScope mergePriorStringEvidence(
+            Project project,
+            File evidenceFile,
+            String stringDigest,
+            Set<String> currentHashes,
+            Set<String> currentVisitedOriginalClasses,
+            Set<String> currentActiveOriginalClasses,
+            Map<String, ? extends Set<String>> currentHashesByOriginalClass,
+            Map<String, ? extends Set<String>> currentHashesByOriginalMethod,
+            Map<String, ? extends Set<String>> currentHashesByOriginalField,
+            int maxUnsafeSkippedStrings,
+            int maxFilteredStrings,
+            String variantName,
+            String artifactLabel,
+            boolean fullCurrentCoverage) {
         TreeSet<String> mergedHashes = new TreeSet<>(currentHashes ?: Collections.emptySet())
         TreeMap<String, Set<String>> mergedOwners = new TreeMap<>()
         (currentHashesByOriginalClass ?: Collections.emptyMap()).each {
@@ -2577,7 +3054,13 @@ class DexCfgObfuscatorPlugin implements Plugin<Project> {
                 currentHashesByOriginalMethod)
         TreeMap<String, Set<String>> mergedFields = mutableNestedStringMap(
                 currentHashesByOriginalField)
-        if (isFullStringCoverageBuild(project)) {
+        TreeSet<String> currentOwnerHashes = nestedStringValues(mergedOwners)
+        if (!mergedHashes.equals(currentOwnerHashes)) {
+            throw new GradleException("[dex-cfg-obf] ${variantName}: current incremental " +
+                    "${artifactLabel} string evidence is not exactly owner-scoped; values and " +
+                    'hashes are not logged; run clean with --rerun-tasks')
+        }
+        if (fullCurrentCoverage) {
             return new StringEvidenceScope(mergedHashes, mergedOwners,
                     mergedMethods, mergedFields)
         }
@@ -2599,17 +3082,40 @@ class DexCfgObfuscatorPlugin implements Plugin<Project> {
         requireStringOwnerScope(prior.get(), variantName, artifactLabel)
         requireStringSkipReasonStats(prior.get(), maxUnsafeSkippedStrings,
                 maxFilteredStrings, variantName, artifactLabel)
+        TreeSet<String> priorOwnerHashes = nestedStringValues(
+                prior.get().getPlaintextSha256ByOriginalClass())
+        if (!new TreeSet<>(prior.get().getPlaintextSha256()).equals(priorOwnerHashes)) {
+            throw new GradleException("[dex-cfg-obf] ${variantName}: prior ${artifactLabel} " +
+                    'string evidence is not exactly owner-scoped; values and hashes are not ' +
+                    'logged; run clean with --rerun-tasks')
+        }
+        TreeSet<String> visitedOwners = new TreeSet<>()
+        (currentVisitedOriginalClasses ?: Collections.emptySet()).each { String owner ->
+            String normalized = ObfuscatorConfig.normalizeClassName(owner)
+            if (!normalized.isEmpty()) visitedOwners.add(normalized)
+        }
+        TreeSet<String> activeOwners = new TreeSet<>()
+        (currentActiveOriginalClasses ?: Collections.emptySet()).each { String owner ->
+            String normalized = ObfuscatorConfig.normalizeClassName(owner)
+            if (!normalized.isEmpty()) activeOwners.add(normalized)
+        }
         int beforeHashes = mergedHashes.size()
         int beforeOwners = mergedOwners.size()
-        mergedHashes.addAll(prior.get().getPlaintextSha256())
+
         prior.get().getPlaintextSha256ByOriginalClass().each {
             String owner, Set<String> hashes ->
-                mergedOwners.computeIfAbsent(owner, ignored -> new TreeSet<>()).addAll(hashes)
+                String normalized = ObfuscatorConfig.normalizeClassName(owner)
+                if (activeOwners.contains(normalized) && !visitedOwners.contains(normalized)) {
+                    mergedOwners.computeIfAbsent(owner, ignored -> new TreeSet<>()).addAll(hashes)
+                }
         }
-        mergeNestedStringMap(mergedMethods,
-                prior.get().getPlaintextSha256ByOriginalMethod())
-        mergeNestedStringMap(mergedFields,
-                prior.get().getPlaintextSha256ByOriginalField())
+        mergeUnvisitedOriginalMemberScope(mergedMethods,
+                prior.get().getPlaintextSha256ByOriginalMethod(), visitedOwners, activeOwners)
+        mergeUnvisitedOriginalMemberScope(mergedFields,
+                prior.get().getPlaintextSha256ByOriginalField(), visitedOwners, activeOwners)
+
+        mergedHashes.clear()
+        mergedOwners.values().each { Set<String> hashes -> mergedHashes.addAll(hashes) }
         int restoredHashes = mergedHashes.size() - beforeHashes
         int restoredOwners = mergedOwners.size() - beforeOwners
         if (restoredHashes > 0 || restoredOwners > 0) {
@@ -2618,6 +3124,28 @@ class DexCfgObfuscatorPlugin implements Plugin<Project> {
                     "${restoredOwners} original owner(s) into the ${artifactLabel} gate")
         }
         return new StringEvidenceScope(mergedHashes, mergedOwners, mergedMethods, mergedFields)
+    }
+
+    private static TreeSet<String> nestedStringValues(
+            Map<String, ? extends Set<String>> source) {
+        TreeSet<String> values = new TreeSet<>()
+        (source ?: Collections.emptyMap()).values().each {
+            Set<String> hashes -> values.addAll(hashes)
+        }
+        return values
+    }
+
+    private static void mergeUnvisitedOriginalMemberScope(
+            Map<String, Set<String>> destination,
+            Map<String, Set<String>> source,
+            Set<String> visitedOwners,
+            Set<String> activeOwners) {
+        (source ?: Collections.emptyMap()).each { String member, Set<String> hashes ->
+            String owner = ObfuscatorConfig.normalizeClassName(originalMemberOwner(member))
+            if (activeOwners.contains(owner) && !visitedOwners.contains(owner)) {
+                destination.computeIfAbsent(member, ignored -> new TreeSet<>()).addAll(hashes)
+            }
+        }
     }
 
     private static TreeMap<String, Set<String>> mutableNestedStringMap(
@@ -2967,7 +3495,13 @@ class DexCfgObfuscatorPlugin implements Plugin<Project> {
             Map<String, Set<String>> methods,
             Map<String, Set<String>> fields,
             String variantName) {
-        if (expected.isEmpty() || classes.isEmpty() || methods.isEmpty()) {
+        if (expected.isEmpty()) {
+            if (!classes.isEmpty() || !methods.isEmpty() || !fields.isEmpty()) {
+                throw invalidStringScope(variantName)
+            }
+            return
+        }
+        if (classes.isEmpty() || methods.isEmpty()) {
             throw invalidStringScope(variantName)
         }
         TreeSet<String> classUnion = new TreeSet<>()
@@ -3068,25 +3602,35 @@ class DexCfgObfuscatorPlugin implements Plugin<Project> {
     }
 
     /** 将 Gradle DSL 的 CFG 质量门禁复制到核心配置，并尽早拒绝无效阈值。 */
+    static void applyQualityBudgets(DexObfuscatorExtension cfg, ObfuscatorConfig config) {
+        if (cfg.minObfuscatedMethods < 0) {
+            throw new GradleException(
+                    '[dex-cfg-obf] dexObfuscator.minObfuscatedMethods must be >= 0')
+        }
+        if (cfg.minFlattenedMethods < 0) {
+            throw new GradleException(
+                    '[dex-cfg-obf] dexObfuscator.minFlattenedMethods must be >= 0')
+        }
+        if (!Double.isFinite(cfg.minObfuscatedRatio)
+                || cfg.minObfuscatedRatio < 0.0d || cfg.minObfuscatedRatio > 1.0d) {
+            throw new GradleException('[dex-cfg-obf] dexObfuscator.minObfuscatedRatio ' +
+                    'must be finite and in [0, 1]')
+        }
+        if (!Double.isFinite(cfg.maxSizeIncreasePercent)
+                || cfg.maxSizeIncreasePercent < 0.0d) {
+            throw new GradleException('[dex-cfg-obf] dexObfuscator.maxSizeIncreasePercent ' +
+                    'must be finite and >= 0')
+        }
+        config.minObfuscatedMethods = cfg.minObfuscatedMethods
+        config.minFlattenedMethods = cfg.minFlattenedMethods
+        config.minObfuscatedRatio = cfg.minObfuscatedRatio
+        config.maxSizeIncreasePercent = cfg.maxSizeIncreasePercent
+    }
+
+    /** 0.0.15 binary/source compatibility for callers of the old helper signature. */
+    @Deprecated
     static void applyQualityBudgets(DexCfgObfuscatorExtension ext, ObfuscatorConfig config) {
-        if (ext.minObfuscatedMethods < 0) {
-            throw new GradleException('[dex-cfg-obf] minObfuscatedMethods must be >= 0')
-        }
-        if (ext.minFlattenedMethods < 0) {
-            throw new GradleException('[dex-cfg-obf] minFlattenedMethods must be >= 0')
-        }
-        if (!Double.isFinite(ext.minObfuscatedRatio)
-                || ext.minObfuscatedRatio < 0.0d || ext.minObfuscatedRatio > 1.0d) {
-            throw new GradleException('[dex-cfg-obf] minObfuscatedRatio must be finite and in [0, 1]')
-        }
-        if (!Double.isFinite(ext.maxSizeIncreasePercent)
-                || ext.maxSizeIncreasePercent < 0.0d) {
-            throw new GradleException('[dex-cfg-obf] maxSizeIncreasePercent must be finite and >= 0')
-        }
-        config.minObfuscatedMethods = ext.minObfuscatedMethods
-        config.minFlattenedMethods = ext.minFlattenedMethods
-        config.minObfuscatedRatio = ext.minObfuscatedRatio
-        config.maxSizeIncreasePercent = ext.maxSizeIncreasePercent
+        applyQualityBudgets(ext.dexObfuscator, config)
     }
 
     private static String configurationDigest(Object... values) {
@@ -3166,16 +3710,30 @@ class DexCfgObfuscatorPlugin implements Plugin<Project> {
     }
 
     private static void warnIfDecryptorMissesCfg(Project project,
-                                                 DexCfgObfuscatorExtension ext,
+                                                 DexObfuscatorExtension cfg,
+                                                 StringEncryptionExtension strings,
                                                  String className,
                                                  String label) {
-        if (!isClassCoveredByCfg(className, ext.obfClass, ext.blackClass)) {
-            if (ext.stringEncryption.failOnUnprotectedDecryptor) {
+        if (!isClassCoveredByCfg(className, cfg.obfClass, cfg.blackClass)) {
+            if (strings.failOnUnprotectedDecryptor) {
                 throw new GradleException("[dex-cfg-obf] string ${label} ${className} is outside " +
-                        "obfClass or excluded by blackClass while failOnUnprotectedDecryptor=true")
+                        'dexObfuscator.obfClass or excluded by dexObfuscator.blackClass while ' +
+                        'stringEncryption.failOnUnprotectedDecryptor=true')
             }
-            project.logger.warn("[dex-cfg-obf] string ${label} ${className} is outside obfClass " +
-                    "or excluded by blackClass, so its decrypt logic will not receive CFG protection")
+            project.logger.warn("[dex-cfg-obf] string ${label} ${className} is outside " +
+                    'dexObfuscator.obfClass or excluded by dexObfuscator.blackClass, so its ' +
+                    'decrypt logic will not receive CFG protection')
+        }
+    }
+
+    private static void warnLegacyCfgDslOnce(Project project,
+                                             DexCfgObfuscatorExtension ext) {
+        if (ext.consumeLegacyCfgDslWarning()) {
+            project.logger.warn('[dex-cfg-obf] legacy top-level CFG DSL is deprecated ' +
+                    "(first property: ${ext.firstLegacyCfgPropertyForPlugin()}); move all CFG " +
+                    'properties into dexControlFlowObfuscator.dexObfuscator { ... }. The legacy ' +
+                    'CFG enabledVariants selector is compatibility-only and has no replacement; ' +
+                    'enabled=true applies to every variant that is built.')
         }
     }
 

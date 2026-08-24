@@ -171,7 +171,7 @@ public final class StringEncryptionContext {
                                     String runtimeDecryptorOriginalMethodKey) {
         if (includePrefixes.isEmpty()) {
             throw new IllegalArgumentException("stringEncryption requires packages/fogPackages "
-                    + "or an inherited dexControlFlowObfuscator.obfClass");
+                    + "or an inherited dexControlFlowObfuscator.dexObfuscator.obfClass");
         }
         this.cipher = cipher;
         this.runtimeDecryptVerifier = runtimeDecryptVerifier;
@@ -374,7 +374,7 @@ public final class StringEncryptionContext {
                 modifiedClasses.size(), constantsEncrypted.get(), constantsSkipped.get(),
                 skippedWhitespace.get(), skippedTooLarge.get(), skippedInvalidUnicode.get(),
                 skippedFiltered.get(), unsupportedConstants.get(), identityCiphertexts.get(),
-                encryptedPlaintextHashes,
+                encryptedPlaintextHashes, visitedClasses,
                 encryptedPlaintextHashesByOriginalClass,
                 encryptedPlaintextHashesByOriginalMethod,
                 encryptedPlaintextHashesByOriginalField);

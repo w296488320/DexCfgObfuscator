@@ -38,12 +38,18 @@ Current coordinates:
 
 | Item | Value |
 |---|---|
-| Gradle Plugin ID | `com.hunter.dexcfgobf` |
-| Group | `com.hunter` |
-| Version | `0.0.14` |
+| Gradle Plugin ID | `io.github.w296488320.dexcfgobf` |
+| Group | `io.github.w296488320` |
+| Version | `0.1.0` |
 | Java | 17 |
 | Current development baseline | Gradle 9.6.1, AGP 9.3.1 |
 | DEX implementation | `com.android.tools.smali:smali-dexlib2:3.0.9` |
+
+The reproducible verification matrix currently covers JDK 17, Gradle 9.6.1, AGP 9.3.1, and
+application Release APK builds in string-only, CFG-only, combined, R8-on, and R8-off modes. The
+library `PROJECT` string path is covered by unit/contract tests. Other Gradle/AGP versions, AAB, and
+OEM runtime behavior are not claimed without testing. Strict global proof for dynamic features and
+configuration cache while string protection is enabled are explicitly unsupported today.
 
 ## Quick integration (start here)
 
@@ -52,57 +58,32 @@ project-level `settings.gradle`, the root `build.gradle`, and the Android module
 Kotlin DSL, custom algorithms, quality gates, and the complete library behavior remain documented in
 the later “Obtaining the plugin,” “Consumer integration,” and “DSL reference” sections.
 
-### Step 1: prepare the local Maven repository
+### Step 1: use the Maven Central online repository
 
-Download and extract `dex-cfg-obfuscator-0.0.14-maven-repo.zip`. The consumer must point at the
-extracted `maven-repo/` directory; copying only the implementation JAR is not sufficient:
-
-```text
-workspace/
-├── YourAndroidApp/
-│   ├── settings.gradle
-│   └── build.gradle
-└── DexCfgObfuscator/
-    └── maven-repo/
-```
-
-DexCfgObfuscator may instead be a Git submodule under the consumer's `external/` or `tools/`
-directory.
+This guide uses Maven Central as the default source. Once `0.1.0` is visible in Central, normal
+consumers do not download this repository, copy a JAR, or build the plugin themselves. Only before
+the first Central release, or for offline/internal distribution, download the GitHub Release
+`dex-cfg-obfuscator-0.1.0-maven-repo.zip` and use its complete `maven-repo/`; do not copy only the
+implementation JAR.
 
 ### Step 2: register the plugin repository in project-level `settings.gradle`
 
 `pluginManagement` must be the first block in `settings.gradle`, and it must resolve both the
-implementation publication and the Gradle plugin marker. If the project already has a
-`pluginManagement` block, merge the `maven` repository below into it instead of creating a second
-block:
+implementation publication and Gradle plugin marker. Merge these repositories into an existing block
+instead of creating a second one:
 
 ```groovy
 pluginManagement {
-    def dexObfRepo = providers.gradleProperty('dexCfgObfuscatorRepo')
-            .getOrElse('../DexCfgObfuscator/maven-repo')
-    def repoFile = file(dexObfRepo)
-    if (!repoFile.isAbsolute()) {
-        repoFile = new File(rootDir, dexObfRepo)
-    }
-
     repositories {
-        maven {
-            name = 'DexCfgObfuscatorLocalRepo'
-            url = uri(repoFile)
-        }
-        gradlePluginPortal()
         google()
         mavenCentral()
+        gradlePluginPortal()
     }
 }
 ```
 
-If developer machines use different locations, override the path in the consumer's
-`gradle.properties`:
-
-```properties
-dexCfgObfuscatorRepo=/absolute/path/to/DexCfgObfuscator/maven-repo
-```
+For an offline ZIP, add `maven { url = uri('/absolute/path/to/maven-repo') }` before the remote
+repositories; the remaining configuration is unchanged.
 
 ### Step 3: declare the plugin version in the root `build.gradle`
 
@@ -112,21 +93,21 @@ Keep the consumer's existing Android plugins and versions, and add only the line
 ```groovy
 plugins {
     // Keep the existing Android/Kotlin plugin declarations here.
-    id 'com.hunter.dexcfgobf' version '0.0.14' apply false
+    id 'io.github.w296488320.dexcfgobf' version '0.1.0' apply false
 }
 ```
 
 If versions are not managed in the root project, the module may instead use
-`id 'com.hunter.dexcfgobf' version '0.0.14'`. Choose one version-management style; do not declare
+`id 'io.github.w296488320.dexcfgobf' version '0.1.0'`. Choose one version-management style; do not declare
 conflicting versions in both locations.
 If the root script does not already contain `plugins {}`, place the new block after any existing
 `buildscript {}` block and before other ordinary configuration blocks.
 
 ### Step 4: apply and configure the application module
 
-This configuration protects strings in both Debug and Release while running DEX CFG only for
-Release. Package selectors use prefix matching; replace them with business packages that you own and
-have regression-tested:
+This configuration enables DEX CFG and string protection as two independent modules. Package
+selectors use prefix matching; replace them with business packages that you own and have
+regression-tested:
 
 ```groovy
 import com.hunter.dexcfgobf.gradle.ObfuscationLevel
@@ -134,24 +115,23 @@ import com.hunter.dexcfgobf.string.StringEncryptionMode
 
 plugins {
     id 'com.android.application'
-    id 'com.hunter.dexcfgobf'
+    id 'io.github.w296488320.dexcfgobf'
 }
 
 dexControlFlowObfuscator {
-    // Controls only the application's post-DEX CFG stage.
-    enabled true
-    enabledVariants = ['release']
-    level ObfuscationLevel.MEDIUM
-
-    obfClass = ['com.example.app']
-    blackClass = [
-            'com.example.app.generated',
-            'com.example.app.bootstrap'
-    ]
+    dexObfuscator {
+        enabled true
+        level ObfuscationLevel.MEDIUM
+        obfClass = ['com.example.app']
+        blackClass = [
+                'com.example.app.generated',
+                'com.example.app.bootstrap'
+        ]
+    }
 
     stringEncryption {
-        // Independent of the outer enabled switch. Application scope is ALL, including matching
-        // classes from local modules and external AAR/JAR dependencies.
+        // Application scope is ALL, including matching classes from local modules and external
+        // AAR/JAR dependencies.
         enabled true
         mode StringEncryptionMode.BYTES
         packages = ['com.example.app']
@@ -160,10 +140,21 @@ dexControlFlowObfuscator {
 }
 ```
 
-For string protection without CFG, set the outer `enabled` property to `false`; the inner
-`stringEncryption.enabled true` remains effective. Coverage, plaintext, unsafe-skip, minimum-count,
-and decryptor-CFG gates already use secure defaults. A Release build must use `--rerun-tasks` so the
-default full-coverage gate sees a complete ASM traversal; advanced overrides are documented later.
+`dexControlFlowObfuscator {}` is only a feature container. `dexObfuscator {}` and
+`stringEncryption {}` use independent `enabled` switches. The canonical `0.1.0` CFG DSL no longer
+has `enabledVariants`; the consumer decides whether to enable the CFG module. For string protection
+without CFG, set `dexObfuscator.enabled` to `false`. Coverage, plaintext, unsafe-skip, minimum-count,
+and decryptor-CFG gates already use secure defaults. A normal Release build automatically forces and
+verifies a complete ASM traversal; callers do not need `--rerun-tasks` for the default strict gate.
+Advanced overrides are documented later.
+
+When upgrading from `0.0.15` or `0.0.16` to `0.1.0`, move the flat CFG `enabled`, `level`, `obfClass`,
+`blackClass`, quality-gate, and adversarial-command properties into `dexObfuscator {}`, and remove
+the CFG `enabledVariants` selector. Keep `stringEncryption {}` as a sibling module. Its standalone
+library `enabledVariants` and the legacy `dependencyEvidenceVariants` field are unrelated selectors
+and remain available.
+Do not consume `0.0.16`: `0.1.0` fixes the nested mutation callback on a real Gradle-decorated
+Extension instance, without which nested module configuration can fail.
 
 ### Step 5 (optional): protect a standalone Android library artifact
 
@@ -177,12 +168,10 @@ import com.hunter.dexcfgobf.string.StringEncryptionMode
 
 plugins {
     id 'com.android.library'
-    id 'com.hunter.dexcfgobf'
+    id 'io.github.w296488320.dexcfgobf'
 }
 
 dexControlFlowObfuscator {
-    // A library has no post-DEX CFG task; configure only its own string scope here.
-    enabled false
     stringEncryption {
         enabled true
         mode StringEncryptionMode.BYTES
@@ -199,12 +188,12 @@ section.
 
 ### Step 6: build and inspect the report
 
-Configuration cache must currently remain disabled when string protection is enabled. For final
-Release validation, force the upstream transforms to execute so a cache-only build is not mistaken
-for FULL coverage:
+Configuration cache must currently remain disabled when string protection is enabled. A strict
+Release automatically varies the ASM transform input and verifies its visits against the scoped
+class inventory before claiming FULL coverage:
 
 ```bash
-./gradlew :app:assembleRelease --rerun-tasks --no-configuration-cache
+./gradlew :app:assembleRelease --no-configuration-cache
 ```
 
 The application report is written to:
@@ -284,7 +273,7 @@ application/library boundaries on the target Android versions before release.
   included classes.
 - For minified release variants, runs after `minify<Variant>WithR8`.
 - Reads the official `SingleArtifact.OBFUSCATION_MAPPING_FILE` and resolves source prefixes from
-  `obfClass` to an exact set of post-R8 class names.
+  `dexObfuscator.obfClass` to an exact set of post-R8 class names.
 - Fails a minified release build if the mapping is missing or resolves no target classes.
 - Supports `-repackageclasses` without opening the entire repackaged namespace to transformation.
 - Selects the opcode table from each DEX header (`dex.035/037/038/039/040/041`) so `dex.039`
@@ -410,8 +399,9 @@ Every DEX is copied to a staging directory outside the producer directory:
 8. Restore backups if the commit fails partway through.
 
 After every producer directory has either current or artifact-bound cached evidence, the plugin
-writes the schema-10 report and enforces `minObfuscatedMethods`, `minFlattenedMethods`,
-`minObfuscatedRatio`, and `maxSizeIncreasePercent` once against the **variant-aggregate** statistics.
+writes the schema-10 report and enforces `dexObfuscator.minObfuscatedMethods`,
+`dexObfuscator.minFlattenedMethods`, `dexObfuscator.minObfuscatedRatio`, and
+`dexObfuscator.maxSizeIncreasePercent` once against the **variant-aggregate** statistics.
 This keeps fresh/cached and multi-directory builds consistent. Before any fresh CFG rewrite, a
 variant-wide transaction snapshots every candidate DEX plus each writable evidence, state, pending,
 and report file. Any caught later quality, string, plaintext, adversarial, or evidence failure restores
@@ -466,42 +456,38 @@ module remains responsible for final-DEX control-flow protection and global plai
 
 ## 4. Obtaining the plugin
 
-### 4.1 Release ZIP (recommended for external consumers)
+### 4.1 Maven Central (recommended)
 
-The distribution is not a standalone copied JAR. It is a directory-style Maven repository that
-contains the implementation JAR, POM metadata, Gradle plugin marker, and checksums:
+This is the default path for normal consumers. Once `0.1.0` is visible in Central, keep
+`mavenCentral()` in `pluginManagement.repositories` and apply
+`io.github.w296488320.dexcfgobf`. Consumers need no Sonatype account, GPG key, or publishing token.
+
+### 4.2 GitHub Release ZIP (offline/internal use)
+
+The distribution is not a standalone copied JAR. It is a directory-style Maven repository containing
+the current implementation JAR, POM metadata, Gradle plugin marker, and checksums:
 
 ```text
-dex-cfg-obfuscator-0.0.14-maven-repo.zip
+dex-cfg-obfuscator-0.1.0-maven-repo.zip
 └── maven-repo/
-    └── com/hunter/...
+    └── io/github/w296488320/...
 ```
 
 Extract it to a stable location and point the consuming build at `maven-repo/`.
 
-### 4.2 Clone or Git submodule
+### 4.3 Maintainer/development verification: publish from source
 
-A sibling layout is simple and portable:
-
-```text
-workspace/
-├── YourAndroidApp/
-└── DexCfgObfuscator/
-    └── maven-repo/
-```
-
-The repository can also be a submodule under `tools/` or `external/`; only the configured repository
-path matters.
-
-### 4.3 Publish from source
+This is not a normal consumer setup step. It is only for plugin maintenance, source-development
+verification, or producing an isolated local repository.
 
 ```bash
 cd DexCfgObfuscator
 ./gradlew clean test validatePlugins publish
 ```
 
-`publish` writes both the implementation publication and plugin marker into this repository's
-`maven-repo/` directory.
+`publish` writes both the implementation publication and plugin marker into the ignored
+`maven-repo/` directory. Pass `-PdexCfgObfuscatorPublishRepo=/absolute/output/path` for an isolated
+destination.
 
 ## 5. Consumer integration
 
@@ -509,57 +495,32 @@ cd DexCfgObfuscator
 
 ```groovy
 pluginManagement {
-    def dexObfRepo = providers.gradleProperty("dexCfgObfuscatorRepo")
-            .getOrElse("../DexCfgObfuscator/maven-repo")
-    def repoFile = file(dexObfRepo)
-    if (!repoFile.isAbsolute()) {
-        repoFile = new File(rootDir, dexObfRepo)
-    }
-
     repositories {
-        maven {
-            name = "DexCfgObfuscatorLocalRepo"
-            url = uri(repoFile)
-        }
-        gradlePluginPortal()
         google()
         mavenCentral()
+        gradlePluginPortal()
     }
 }
 ```
 
-An absolute override can live in the consumer's `gradle.properties`:
-
-```properties
-dexCfgObfuscatorRepo=/absolute/path/to/DexCfgObfuscator/maven-repo
-```
+For a ZIP distribution, add the local Maven directory as the first repository.
 
 ### 5.2 Kotlin `settings.gradle.kts`
 
 ```kotlin
 pluginManagement {
-    val configured = providers.gradleProperty("dexCfgObfuscatorRepo")
-        .orElse("../DexCfgObfuscator/maven-repo")
-        .get()
-    val candidate = file(configured)
-    val repoDir = if (candidate.isAbsolute) candidate else rootDir.resolve(configured)
-
     repositories {
-        maven {
-            name = "DexCfgObfuscatorLocalRepo"
-            url = uri(repoDir)
-        }
-        gradlePluginPortal()
         google()
         mavenCentral()
+        gradlePluginPortal()
     }
 }
 ```
 
 ### 5.3 Groovy application module `build.gradle`
 
-The module examples below assume that the root `build.gradle` already declares version `0.0.14`
-with `apply false`. Add `version '0.0.14'` after the module plugin ID only when there is no
+The module examples below assume that the root `build.gradle` already declares version `0.1.0`
+with `apply false`. Add `version '0.1.0'` after the module plugin ID only when there is no
 project-level declaration.
 
 ```groovy
@@ -568,36 +529,36 @@ import com.hunter.dexcfgobf.string.StringEncryptionMode
 
 plugins {
     id 'com.android.application'
-    id 'com.hunter.dexcfgobf'
+    id 'io.github.w296488320.dexcfgobf'
 }
 
 dexControlFlowObfuscator {
-    enabled true
-    // Optional: run CFG only for release. The independent string stage still handles its enabled variants.
-    enabledVariants = ['release']
-    level ObfuscationLevel.MEDIUM
+    dexObfuscator {
+        enabled true
+        level ObfuscationLevel.MEDIUM
 
-    // Prefix matching. Target only application code that you own and test.
-    obfClass = [
-            'com.example.app',
-            'com.example.security'
-    ]
+        // Prefix matching. Target only application code that you own and test.
+        obfClass = [
+                'com.example.app',
+                'com.example.security'
+        ]
 
-    // Exclude bootstrap, generated, very large, or temporarily unsupported areas.
-    blackClass = [
-            'com.example.app.bootstrap',
-            'com.example.app.generated'
-    ]
+        // Exclude bootstrap, generated, very large, or temporarily unsupported areas.
+        blackClass = [
+                'com.example.app.bootstrap',
+                'com.example.app.generated'
+        ]
 
-    minObfuscatedMethods = 100
-    // Counts only strong flattening; safely reordered methods do not satisfy this gate.
-    minFlattenedMethods = 50
-    minObfuscatedRatio = 0.30
-    maxSizeIncreasePercent = 50
+        minObfuscatedMethods = 100
+        // Counts only strong flattening; safely reordered methods do not satisfy this gate.
+        minFlattenedMethods = 50
+        minObfuscatedRatio = 0.30
+        maxSizeIncreasePercent = 50
+    }
 
     stringEncryption {
-        // Independent of the outer enabled switch. Application scope is ALL, so these prefixes
-        // also select matching classes from local modules and external AAR/JAR dependencies.
+        // Application scope is ALL, so these prefixes also select matching classes from local
+        // modules and external AAR/JAR dependencies.
         enabled true
         mode StringEncryptionMode.BYTES
         packages = ['com.example.app', 'com.example.security']
@@ -609,7 +570,8 @@ dexControlFlowObfuscator {
 Those four string properties are the normal setup. The plugin already defaults to at least one
 encrypted string and modified class, zero unsafe or custom-filter skips, final-DEX plaintext
 verification, protected decryptor coverage when CFG is enabled, and complete Release coverage.
-Run Release with `--rerun-tasks`; override a gate only for a deliberately baselined exception.
+Release obtains that complete coverage automatically; override a gate only for a deliberately
+baselined exception.
 
 ### 5.4 Kotlin application module `build.gradle.kts`
 
@@ -619,15 +581,17 @@ import com.hunter.dexcfgobf.string.StringEncryptionMode
 
 plugins {
     id("com.android.application")
-    id("com.hunter.dexcfgobf")
+    id("io.github.w296488320.dexcfgobf")
 }
 
 dexControlFlowObfuscator {
-    enabled = true
-    level = ObfuscationLevel.MEDIUM
-    obfClass = listOf("com.example.app", "com.example.security")
-    blackClass = listOf("com.example.app.bootstrap", "com.example.app.generated")
-    minFlattenedMethods = 50 // safely reordered methods do not count
+    dexObfuscator {
+        enabled = true
+        level = ObfuscationLevel.MEDIUM
+        obfClass = listOf("com.example.app", "com.example.security")
+        blackClass = listOf("com.example.app.bootstrap", "com.example.app.generated")
+        minFlattenedMethods = 50 // safely reordered methods do not count
+    }
     stringEncryption {
         enabled = true
         mode = StringEncryptionMode.BYTES
@@ -639,12 +603,13 @@ dexControlFlowObfuscator {
 
 ### 5.5 Application with string protection only
 
-The outer `enabled` property controls only the application's post-DEX CFG stage:
+The `dexObfuscator.enabled` property controls only the application's post-DEX CFG stage:
 
 ```groovy
 dexControlFlowObfuscator {
-    enabled false
-    obfClass = ['com.example.app']
+    dexObfuscator {
+        enabled false
+    }
     stringEncryption {
         enabled true
     }
@@ -654,17 +619,16 @@ dexControlFlowObfuscator {
 ### 5.6 Android library module
 
 An Android library can apply the same plugin, but only its pre-D8/R8 string stage runs. This is for
-protecting a standalone AAR before publishing it. A consuming `0.0.14` application already uses
+protecting a standalone AAR before publishing it. A consuming `0.1.0` application already uses
 `ALL` scope and does not require the plugin on each library dependency.
 
 ```groovy
 plugins {
     id 'com.android.library'
-    id 'com.hunter.dexcfgobf'
+    id 'io.github.w296488320.dexcfgobf'
 }
 
 dexControlFlowObfuscator {
-    enabled false
     stringEncryption {
         enabled true
         // Advanced: publish only selected standalone-library variants. Empty means every variant.
@@ -705,15 +669,17 @@ merges the library's original member-scoped hashes so its final-DEX gate can sti
 already encrypted values:
 
 ```groovy
-stringEncryption {
-    enabled true
-    mode StringEncryptionMode.BYTES
-    packages = ['com.example.app', 'com.example.legacy.library']
-    excludePackages = ['com.example.app.databinding']
+dexControlFlowObfuscator {
+    stringEncryption {
+        enabled true
+        mode StringEncryptionMode.BYTES
+        packages = ['com.example.app', 'com.example.legacy.library']
+        excludePackages = ['com.example.app.databinding']
 
-    // Legacy advanced compatibility only; the selected library variant must remain unminified.
-    dependencyEvidenceProjects = [':legacyLibrary']
-    dependencyEvidenceVariants = ['release']
+        // Legacy advanced compatibility only; the selected library variant must remain unminified.
+        dependencyEvidenceProjects = [':legacyLibrary']
+        dependencyEvidenceVariants = ['release']
+    }
 }
 ```
 
@@ -728,15 +694,15 @@ the library must also be distributed as a protected standalone artifact.
 
 ### 5.7 Build
 
-Version `0.0.14` still performs an in-place post-processing step on the DEX producer output. It
+Version `0.1.0` still performs an in-place post-processing step on the DEX producer output. It
 records the content fingerprint of every successfully transformed DEX directory. A consecutive
 incremental build skips an exact post-transform match, while changed or regenerated DEX is processed
-normally. Keep `--rerun-tasks` on release builds so the default full-coverage gate sees every class
-in the current invocation. `clean` may be added, but does not replace that flag:
+normally. Strict Release builds automatically invalidate the ASM transform input and verify every
+selected class in the current invocation. Use `--rerun-tasks` only for recovery or diagnostics:
 
 ```bash
-./gradlew :app:assembleRelease --rerun-tasks --no-configuration-cache
-# optional clean build
+./gradlew :app:assembleRelease --no-configuration-cache
+# optional recovery/diagnostic build
 ./gradlew clean :app:assembleRelease --rerun-tasks --no-configuration-cache
 ```
 
@@ -753,14 +719,16 @@ artifact still need end-to-end inspection.
 
 ## 6. DSL reference
 
-Only stable choices that the consumer must control are public. Structural verification, try/catch
-support, type separation, payload relocation, multiple templates, and JSON reports remain enabled by
-default.
+`dexControlFlowObfuscator {}` is an extensible feature container. It currently contains the
+independent `dexObfuscator {}` and `stringEncryption {}` modules; future protection features should
+be added as sibling modules. Structural verification, try/catch support, type separation, payload
+relocation, multiple templates, and JSON reports remain enabled by default.
+
+`dexObfuscator {}` configures the application's post-DEX CFG stage:
 
 | Property | Type | Default | Description |
 |---|---|---|---|
-| `enabled` | `boolean` | `true` | Controls only the application's post-DEX CFG stage, not string encryption |
-| `enabledVariants` | `List<String>` | `[]` | Variant/build-type selectors for CFG; empty means every application variant and does not filter strings |
+| `enabled` | `boolean` | `true` | Enables the application's post-DEX CFG stage; it does not control other modules |
 | `level` | `ObfuscationLevel` | `MEDIUM` | `LOW`, `MEDIUM`, or `HIGH` |
 | `obfClass` | `List<String>` | `[]` | Package or class prefixes to process |
 | `blackClass` | `List<String>` | `[]` | Prefixes appended to the built-in exclusions |
@@ -771,7 +739,7 @@ default.
 | `adversarialCommands` | `List<List<String>>` | `[]` | Optional external regression commands; not shell strings |
 | `adversarialTimeoutSeconds` | `int` | `300` | Timeout for each external command |
 
-`stringEncryption {}` is an independent pre-D8/R8 stage within the same plugin:
+`stringEncryption {}` is an independent pre-D8/R8 stage in the same container:
 
 | Property | Default | Description |
 |---|---|---|
@@ -781,8 +749,8 @@ default.
 | `algorithm` | `null` | Optional build-time cipher object; a matching runtime `implementation` is still required |
 | `keyGenerator` / `kg` | built-in | Build-time key generator object or one/two-argument Groovy closure |
 | `mode` | `BYTES` | `BYTES` or `BASE64`; `bytes`, `base64`, and `text` are accepted, with `text` mapped to `BASE64` |
-| `packages` / `fogPackages` | omitted | Omitted (`null`) inherits `obfClass`; explicit `[]` disables inheritance and fails validation because no target package remains |
-| `excludePackages` | omitted | Omitted (`null`) inherits `blackClass`; explicit `[]` means do not inherit CFG exclusions |
+| `packages` / `fogPackages` | omitted | Omitted (`null`) inherits `dexObfuscator.obfClass`; explicit `[]` disables inheritance and fails validation because no target package remains |
+| `excludePackages` | omitted | Omitted (`null`) inherits `dexObfuscator.blackClass`; explicit `[]` means do not inherit CFG exclusions |
 | `seed` | `0x6D0F27BD4A91C35E` | Deterministic built-in key-derivation seed; it is not a secret |
 | `maxStringBytes` | `4096` | Per-literal UTF-8 plaintext limit; ciphertext and key also have bytecode budgets |
 | `bridgeClass` | `<namespace>.DexStringDecryptor_<projectHash>` | Generated top-level bridge; the default is collision-safe across modules |
@@ -819,8 +787,8 @@ under `build/intermediates`.
 
 `packages` and `excludePackages` inherit independently and only when omitted. In an application,
 the resulting prefix filters are evaluated across the complete `ALL` class scope. For example,
-`packages = []` does not mean “use `obfClass`,” and `excludePackages = []` intentionally allows the
-string stage to ignore outer CFG exclusions.
+`packages = []` does not mean “use `dexObfuscator.obfClass`,” and `excludePackages = []`
+intentionally allows the string stage to ignore `dexObfuscator.blackClass` exclusions.
 
 ### 6.1 Built-in algorithm and carrier modes
 
@@ -866,13 +834,15 @@ public byte[] generate(String value);
 Typical Groovy configuration:
 
 ```groovy
-stringEncryption {
-    enabled true
-    implementation 'com.example.security.CustomStringCipher'
-    kg = new CustomKeyGenerator()
-    mode StringEncryptionMode.BYTES
-    fogPackages = ['com.example']
-    excludePackages = []
+dexControlFlowObfuscator {
+    stringEncryption {
+        enabled true
+        implementation 'com.example.security.CustomStringCipher'
+        kg = new CustomKeyGenerator()
+        mode StringEncryptionMode.BYTES
+        fogPackages = ['com.example']
+        excludePackages = []
+    }
 }
 ```
 
@@ -919,6 +889,19 @@ Enabling this stage while the old StringFog plugin is applied fails fast to prev
 instrumentation. The nested `stringFog {}` / `stringfog {}` aliases belong to DexCfgObfuscator and are not StringFog's
 old top-level extension.
 
+### 6.4 Migrating from 0.0.15/0.0.16 to 0.1.0
+
+Version `0.1.0` separates each protection feature into its own module. Move the flat CFG `enabled`,
+`level`, `obfClass`, `blackClass`, quality-gate, and adversarial-command properties from
+`dexControlFlowObfuscator {}` into `dexObfuscator {}`. Remove the CFG `enabledVariants` selector and
+let the consumer decide with `dexObfuscator.enabled`. `stringEncryption {}` remains in place; its
+`enabledVariants` still serves advanced standalone-library publication, while
+`dependencyEvidenceVariants` remains a legacy evidence compatibility field.
+
+Do not continue using `0.0.16`: it worked with direct test objects, but a real Gradle-decorated
+Extension instance did not invoke the nested mutation callback correctly. Version `0.1.0` fixes
+that callback so nested module configuration reliably mutates the actual Extension.
+
 Built-in **CFG-stage** excluded prefixes:
 
 ```text
@@ -931,8 +914,9 @@ com/google/
 
 They are not silently applied to the string stage. The string stage automatically skips only the
 generated bridge, configured runtime implementation, `BuildConfig`, `R`/`R2`, and explicit
-`excludePackages`; `packages` and `excludePackages` inherit independently. All class lists use prefix
-matching, not regular expressions. Prefer complete and precise package prefixes so that `com.foo`
+`excludePackages`; `packages` and `excludePackages` inherit independently. `dexObfuscator.obfClass`,
+`dexObfuscator.blackClass`, `packages`, and `excludePackages` all use prefix matching, not regular
+expressions. Prefer complete and precise package prefixes so that `com.foo`
 does not unintentionally include `com.foobar`.
 
 ## 7. Obfuscation levels
@@ -949,19 +933,21 @@ skip.
 
 ## 8. Adversarial commands
 
-`adversarialCommands` can run JADX, an internal verifier, or another regression tool after
+`dexObfuscator.adversarialCommands` can run JADX, an internal verifier, or another regression tool after
 obfuscation. Every command must be an argument array. The plugin invokes `ProcessBuilder` directly
 without shell interpretation.
 
 ```groovy
 dexControlFlowObfuscator {
-    adversarialCommands = [[
-            'tools/check-obfuscated-dex',
-            '--dex-dir', '{dexDir}',
-            '--report', '{report}',
-            '--variant', '{variant}'
-    ]]
-    adversarialTimeoutSeconds = 300
+    dexObfuscator {
+        adversarialCommands = [[
+                'tools/check-obfuscated-dex',
+                '--dex-dir', '{dexDir}',
+                '--report', '{report}',
+                '--variant', '{variant}'
+        ]]
+        adversarialTimeoutSeconds = 300
+    }
 }
 ```
 
@@ -1016,7 +1002,7 @@ At minimum, CI should retain the report and compare:
 
 - `dexFailed` must be zero.
 - `methodsObfuscated` and `obfuscatedRatio` should not collapse unexpectedly.
-- When `minFlattenedMethods` is configured, the variant-aggregate `methodsFlattened` must meet that baseline;
+- When `dexObfuscator.minFlattenedMethods` is configured, the variant-aggregate `methodsFlattened` must meet that baseline;
   `methodsReordered` does not count toward this gate.
 - `sizeIncreasePercent` should not spike unexpectedly.
 - `alreadyObfuscated` should be near zero in a pristine build.
@@ -1034,16 +1020,15 @@ so end-to-end proof still belongs to the consuming application build.
 artifact/config-bound evidence was restored and the relevant DEX or JVM UTF8 pools were scanned
 again. Both can enforce
 count gates. `PARTIAL_OR_FULL`, `CACHED_PARTIAL`, and `UNKNOWN_INCREMENTAL` require a
-`--rerun-tasks` refresh. Release already enables the unknown-coverage failure by default. Missing,
-corrupt, or mismatched evidence fails closed when the strict plaintext gate is enabled.
+full-coverage refresh before they can pass a strict gate. Release already enables that gate by
+default, automatically forces the complete traversal, and verifies it against the current scoped
+class inventory. Missing, corrupt, or mismatched evidence still fails closed.
 
 On a cached library path with no current ASM snapshot, evidence is accepted only when both the class
-artifact fingerprint and configuration digest match. A non-`--rerun-tasks` transform may visit only
-changed classes, so current hashes are conservatively unioned with compatible prior hashes. A
-configuration change refuses that inheritance and requires a clean/`--rerun-tasks` build; a full
-rerun resets the union. A first partial build without prior evidence remains non-`FULL`, so release CI
-must use `--rerun-tasks`; the matching `failOnUnknownCoverage=true` Release policy is already the
-default.
+artifact fingerprint and configuration digest match. A non-strict incremental transform may visit
+only changed classes, so current hashes are conservatively unioned with compatible prior hashes.
+Strict Release does not rely on that uncertain union: it automatically performs a complete traversal
+and proves the result against the scoped inventory. `--rerun-tasks` remains a recovery option.
 
 In application schema-10 JSON, `evidence.source` is `CURRENT_BUILD`, `CACHED_VERIFIED`, `MIXED`, `MISSING`, or
 `PARTIAL_MISSING`. The last value means one enabled stage has proof while another does not; always
@@ -1129,6 +1114,9 @@ run critical business flows. A successful build or install alone is not runtime 
 
 ## 11. Creating a distribution
 
+This section is for plugin maintainers and offline/internal distribution. Normal Maven Central
+consumers do not run these commands or download the Maven-repository ZIP.
+
 ```bash
 chmod +x build-release.sh
 ./build-release.sh
@@ -1137,23 +1125,27 @@ chmod +x build-release.sh
 The script:
 
 1. Runs `clean test validatePlugins`.
-2. Publishes to this repository's `maven-repo/`.
+2. Publishes to an isolated temporary Maven repository.
 3. Verifies the implementation JAR and Gradle plugin marker.
-4. Packages `maven-repo/`, the root README, and both language documents.
+4. Packages only the current version, root README, bilingual docs, `LICENSE`, and third-party notices.
 5. Writes a SHA-256 checksum file.
 
-Consumers extract the ZIP, add its `maven-repo/` to `pluginManagement.repositories`, and apply the
+Offline consumers extract the ZIP, add its `maven-repo/` to `pluginManagement.repositories`, and apply the
 same version. `mavenLocal()` is not required.
+
+For Maven Central, `./build-central-bundle.sh` creates a PGP-signed Maven-layout ZIP without
+uploading it. Account, namespace, GPG, and manual Portal instructions are in
+[MAVEN_CENTRAL.md](MAVEN_CENTRAL.md).
 
 ## 12. Troubleshooting
 
 ### 12.1 `Plugin ... was not found`
 
-Check that:
+For Maven Central, check `mavenCentral()` and the canonical plugin ID. For a ZIP, check that:
 
 - The Maven URL points to the extracted `maven-repo/`, not the ZIP or JAR.
 - `pluginManagement.repositories` is in `settings.gradle(.kts)`.
-- The marker directory contains `com.hunter.dexcfgobf.gradle.plugin-<version>.pom`.
+- The marker directory contains `io.github.w296488320.dexcfgobf.gradle.plugin-<version>.pom`.
 - The requested version matches the version directory in the repository.
 
 ### 12.2 Missing release mapping
@@ -1162,11 +1154,12 @@ The minified release path requires the R8 mapping. Check that:
 
 - The variant with `minifyEnabled true` actually runs R8.
 - No custom task removes or relocates the mapping.
-- `obfClass` contains pre-R8 source class names.
+- `dexObfuscator.obfClass` contains pre-R8 source class names.
 
 ### 12.3 `R8 mapping resolved zero included classes`
 
-`obfClass` did not match application classes, or every match was excluded by `blackClass` or a
+`dexObfuscator.obfClass` did not match application classes, or every match was excluded by
+`dexObfuscator.blackClass` or a
 built-in prefix. Use a precise source package and inspect class names on the left side of the R8
 mapping.
 
@@ -1179,20 +1172,21 @@ conservative path.
 
 ### 12.5 `DEX size increase ... exceeds maxSizeIncreasePercent`
 
-Variant-aggregate DEX growth exceeded the configured `maxSizeIncreasePercent` (default `100.0`).
+Variant-aggregate DEX growth exceeded the configured `dexObfuscator.maxSizeIncreasePercent`
+(default `100.0`).
 The schema-10 report may have been refreshed before this gate fails, but the variant transaction
 restores it together with all evidence/state/pending files and every fresh-directory DEX. The next
 clean `--rerun-tasks` build starts again from the producer's original artifact. First:
 
 - Look for `skip unchanged already-obfuscated DEX dir`; if it is absent and an old plugin may be in
-  use, confirm that the host requests version `0.0.14`.
+  use, confirm that the host requests version `0.1.0`.
 - Reduce `HIGH` to `MEDIUM` or `LOW`.
-- Narrow `obfClass`.
+- Narrow `dexObfuscator.obfClass`.
 - Exclude generated code with very large or numerous switches.
 
 ### 12.6 A second consecutive build grows unexpectedly
 
-Version `0.0.14` still post-processes the producer output directory in place, but records checksummed
+Version `0.1.0` still post-processes the producer output directory in place, but records checksummed
 CFG evidence containing the directory fingerprint, transform digest, and statistics. It skips only
 when current DEX bytes exactly match the evidenced post-transform fingerprint and the transform
 digest also matches. Missing, corrupt, state-only, or mismatched evidence fails closed and asks for a
@@ -1212,7 +1206,8 @@ removing the task-name and producer-directory adapter.
 
 ### 12.7 `stringEncryption requires packages/fogPackages`
 
-The effective string include list is empty. Omit `packages`/`fogPackages` to inherit `obfClass`, or
+The effective string include list is empty. Omit `packages`/`fogPackages` to inherit
+`dexObfuscator.obfClass`, or
 set a non-empty string-specific list. An explicit `[]` intentionally disables inheritance and is not
 treated as “all classes.”
 
@@ -1321,10 +1316,9 @@ that string-encrypted classes were reused.
 - Incremental evidence stores plaintext SHA-256 values (never plaintext) under `build/intermediates`.
   Someone who already has the local build directory can dictionary-test short/common strings, so do
   not commit or distribute that directory; `clean` removes the evidence.
-- Partial incremental builds conservatively inherit hashes from compatible prior evidence;
-  configuration changes refuse the union and a full rerun resets it. Without prior evidence, a first
-  partial build remains non-`FULL`; Release fails that state by default, so use `--rerun-tasks` for
-  its complete coverage proof.
+- Partial incremental builds conservatively inherit hashes from compatible prior evidence. Default
+  strict Release avoids that uncertain state by forcing a complete ASM traversal and checking the
+  scoped inventory automatically; callers do not need to add `--rerun-tasks`.
 - Dynamic-feature modules are not yet instrumented and audited end-to-end. The default strict
   plaintext gate rejects configured `dynamicFeatures` instead of claiming whole-bundle proof.
   Report-only mode may continue with a warning, but coverage remains non-`FULL`.
@@ -1342,12 +1336,18 @@ that string-encrypted classes were reused.
 DexCfgObfuscator/
 ├── build.gradle
 ├── build-release.sh
+├── build-central-bundle.sh
+├── LICENSE
+├── THIRD_PARTY_NOTICES.md
 ├── README.md
+├── .github/                     # CI, Dependabot, and issue/PR templates
 ├── doc/
 │   ├── README_CN.md
-│   └── README_EN.md
-├── maven-repo/                 # Directly consumable directory Maven repository
-├── release/                    # Generated by build-release.sh; ignored by default
+│   ├── README_EN.md
+│   └── MAVEN_CENTRAL.md
+├── samples/android-consumer/   # Reproducible string/CFG/R8 host
+├── maven-repo/                 # Generated locally; ignored
+├── release/                    # Generated by release scripts; ignored
 └── src/
     ├── main/groovy/com/hunter/dexcfgobf/
     │   ├── gradle/             # Gradle plugin and DSL
@@ -1360,20 +1360,28 @@ DexCfgObfuscator/
     └── test/java/com/hunter/dexcfgobf/
 ```
 
-## 15. Public-release checklist
+## 15. License, attribution, and release checklist
 
-The repository does not currently contain a `LICENSE`. Before public release, the project owner
-should:
+The project is licensed under the [Apache License 2.0](../LICENSE). The `stringEncryption` design and
+migration-compatible API were informed by
+[MegatronKing/StringFog](https://github.com/MegatronKing/StringFog); portions of its ASM
+visitor/carrier implementation were adapted and substantially modified. DEX handling uses dexlib2 and JVM
+bytecode handling uses ASM. Complete dependency, copyright, and license notices are in
+[THIRD_PARTY_NOTICES.md](../THIRD_PARTY_NOTICES.md). No upstream project endorses this project.
 
-- Select and add a `LICENSE`.
-- Add the real GitHub URL, issue tracker, and contribution process.
-- Confirm that history, examples, and release artifacts contain no credentials, signing files, or
-  private application data.
-- Run `./build-release.sh` in a pristine clone.
-- Verify the release ZIP SHA-256.
-- Run debug/release, JADX, ART, and business-flow validation on both a minimal sample and a real app.
+Before every public release:
+
+- Confirm the worktree, history, samples, and archives contain no credentials, signing private keys,
+  or private application data.
+- Run tests, `./build-release.sh`, and the Android consumer sample from a pristine clone.
+- Verify the release SHA-256; for Central, inspect POM, sources, javadoc, and PGP signatures.
+- Run debug/release, JADX, ART, performance, and critical business-flow validation on a real app.
+- Never overwrite a published version; every change requires a new version and matching tag.
 
 ## 16. Contribution principles
+
+See [CONTRIBUTING.md](../CONTRIBUTING.md) and [SECURITY.md](../SECURITY.md) for contribution and
+private-reporting workflows.
 
 - Correctness and safe fallback take priority over transform coverage.
 - New transforms require semantic tests, DEX re-parse tests, and boundary cases.

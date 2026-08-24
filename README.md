@@ -2,14 +2,16 @@
 
 [简体中文](doc/README_CN.md) | [English](doc/README_EN.md)
 
-DexCfgObfuscator is a local Android Gradle plugin that encrypts executable JVM string literals before
-D8/R8 and transforms DEX control flow after D8/R8. It combines a pluggable string cipher/key SPI,
+DexCfgObfuscator is an Android Gradle plugin that performs all processing inside the consuming build:
+it encrypts executable JVM string literals before D8/R8 and transforms DEX control flow after D8/R8.
+It combines a pluggable string cipher/key SPI,
 multi-region control-flow flattening, verifier-aware fallback reordering, payload relocation,
 structural verification, safety budgets, and JSON coverage reports.
 
-DexCfgObfuscator 是一个纯本地 Android Gradle 插件：在 D8/R8 前加密可执行字符串字面量，
-在 D8/R8 后、APK 打包前改写指定业务类的 DEX 控制流。它提供可插拔算法/密钥 SPI，并组合
-多区域控制流平坦化、verifier 感知的安全回退、payload 重定位、结构验证和 JSON 报告。
+DexCfgObfuscator 是一个在宿主构建过程中完成全部处理的 Android Gradle 插件：在 D8/R8 前加密
+可执行字符串字面量，在 D8/R8 后、APK 打包前改写指定业务类的 DEX 控制流。它提供可插拔算法/
+密钥 SPI，并组合多区域控制流平坦化、verifier 感知的安全回退、payload 重定位、结构验证和
+JSON 报告。
 
 > This project raises the cost of static analysis. Embedded keys and runtime plaintext mean the
 > string stage is not secret storage, and no obfuscator can prevent determined runtime analysis.
@@ -21,6 +23,9 @@ DexCfgObfuscator 是一个纯本地 Android Gradle 插件：在 D8/R8 前加密�
 
 - [中文完整文档](doc/README_CN.md)
 - [Full English documentation](doc/README_EN.md)
+- [Maven Central 发布者指南](doc/MAVEN_CENTRAL.md)
+- [Android consumer sample](samples/android-consumer)
+- [Contributing](CONTRIBUTING.md) | [Security policy](SECURITY.md) | [Changelog](CHANGELOG.md)
 
 ## Highlights / 主要能力
 
@@ -55,34 +60,48 @@ DexCfgObfuscator 是一个纯本地 Android Gradle 插件：在 D8/R8 前加密�
 
 | Item | Value |
 |---|---|
-| Plugin ID | `com.hunter.dexcfgobf` |
-| Implementation group | `com.hunter` |
-| Current version | `0.0.14` |
+| Plugin ID | `io.github.w296488320.dexcfgobf` |
+| Implementation group | `io.github.w296488320` |
+| Current version | `0.1.0` |
 | Java baseline | Java 17 |
 | Development baseline | Gradle 9.6.1, AGP 9.3.1 |
 | Artifact type | Gradle plugin JAR distributed through a Maven repository |
 
-## Quick start / 快速接入
+The checked-in Android sample verifies string-only, CFG-only, combined, and R8-enabled Release APK
+builds on this baseline. Other Gradle/AGP versions, AAB, dynamic features, and OEM runtime behavior
+remain unverified unless stated otherwise. / 仓库内示例已验证上述基线下的字符串单开、CFG 单开、双开和
+R8 Release APK；其他 Gradle/AGP、AAB、dynamic feature 与 OEM 运行行为不作未经测试的兼容承诺。
 
-Download or build the Maven-repository ZIP, extract it, and point the consuming build at the
-included `maven-repo/` directory.
+## Online quick start / 在线仓库快速接入
 
-下载或生成 Maven 仓库 ZIP，解压后让宿主项目指向其中的 `maven-repo/` 目录。
+Maven Central is the canonical online repository. Once `0.1.0` is visible there, consumers only
+need the repository and plugin declarations below; they do not download or build this repository.
+Maven Central 是默认在线仓库；确认 `0.1.0` 已同步可查后，使用者只需下面的仓库和插件声明，
+不需要下载本仓库或自行构建插件。
 
 `settings.gradle`:
 
 ```groovy
 pluginManagement {
     repositories {
-        maven { url = uri("../DexCfgObfuscator/maven-repo") }
-        gradlePluginPortal()
         google()
         mavenCentral()
+        gradlePluginPortal()
     }
 }
 ```
 
-Android application module `build.gradle`:
+Root project `build.gradle` / 项目根 `build.gradle`：
+
+```groovy
+plugins {
+    // Keep existing Android/Kotlin declarations and add this line.
+    // 保留已有 Android/Kotlin 插件声明，只增加这一行。
+    id 'io.github.w296488320.dexcfgobf' version '0.1.0' apply false
+}
+```
+
+Android application module `build.gradle` / application 模块 `build.gradle`：
 
 ```groovy
 import com.hunter.dexcfgobf.gradle.ObfuscationLevel
@@ -90,19 +109,16 @@ import com.hunter.dexcfgobf.string.StringEncryptionMode
 
 plugins {
     id 'com.android.application'
-    id 'com.hunter.dexcfgobf' version '0.0.14'
+    id 'io.github.w296488320.dexcfgobf'
 }
 
 dexControlFlowObfuscator {
-    enabled true
-    enabledVariants = ['release'] // CFG only; the string stage remains independent
-    level ObfuscationLevel.MEDIUM
-    obfClass = ['com.example.app']
-    blackClass = ['com.example.app.bootstrap']
-    minObfuscatedMethods = 20
-    minFlattenedMethods = 10 // reordered methods do not satisfy this gate
-    minObfuscatedRatio = 0.30
-    maxSizeIncreasePercent = 50
+    dexObfuscator {
+        enabled true
+        level ObfuscationLevel.MEDIUM
+        obfClass = ['com.example.app']
+        blackClass = ['com.example.app.bootstrap']
+    }
 
     stringEncryption {
         enabled true
@@ -113,17 +129,37 @@ dexControlFlowObfuscator {
 }
 ```
 
+If the root project does not manage plugin versions, put `version '0.1.0'` on the module plugin line
+instead; use exactly one version-management style. / 如果根项目不统一管理插件版本，才在模块插件 ID
+后追加 `version '0.1.0'`；两种方式选择一种即可。
+
+### Offline fallback / 离线备用
+
+Until the first Central release, or for offline/internal distribution, download a GitHub Release
+Maven-repository ZIP, extract it, and add its `maven-repo/` directory before the remote repositories
+in `pluginManagement`. / 首个 Central 版本发布前，或需要离线/内部分发时，可下载 GitHub Release
+中的 Maven 仓库 ZIP，解压后把其中的 `maven-repo/` 放在 `pluginManagement` 远程仓库之前。
+
+`dexControlFlowObfuscator {}` is the container for independent protection modules. Enable or disable
+`dexObfuscator {}` and `stringEncryption {}` separately. Version `0.1.0` removes the CFG
+`enabledVariants` selector from the canonical DSL; the consumer decides whether to enable the CFG
+module. Additional CFG quality budgets remain available in the detailed documentation.
+
+Do not consume version `0.0.16`. Version `0.1.0` fixes the nested mutation callback when Gradle
+decorates the real extension instance; without that fix, nested module configuration can fail during
+consumer project configuration.
+
 These four string-encryption options are sufficient for normal use. Safety, plaintext-leak,
 decryptor-protection, final-DEX, and coverage gates use secure defaults. Application variants inspect
 matching classes across the complete dependency graph automatically; no dependency-evidence project
-list is required. Run release builds with `--rerun-tasks` so the default release coverage gate can
-prove a complete fresh visit.
+list is required. A normal release build automatically forces and verifies a complete ASM visit;
+callers do not need to add `--rerun-tasks` for the default strict coverage gate.
 
 Build from a pristine producer DEX while the current AGP adapter still uses an in-place post-D8/R8
 integration:
 
 ```bash
-./gradlew :app:assembleRelease --rerun-tasks --no-configuration-cache
+./gradlew :app:assembleRelease --no-configuration-cache
 ```
 
 The report is written to:
@@ -142,27 +178,56 @@ final APK/AAB, so release CI should run the consuming application's final-DEX ga
 
 ## Build and distribute / 构建与分发
 
+This section is for maintainers and offline/internal distribution. Normal Maven Central consumers do
+not run these commands. / 本节用于维护者发布以及离线/内部分发；普通 Maven Central 使用者不执行这些命令。
+
 ```bash
 cd DexCfgObfuscator
 ./build-release.sh
 ```
 
-The script runs tests and plugin validation, publishes the local Maven repository, and creates:
+The script runs tests and plugin validation, publishes into an isolated temporary Maven repository,
+and packages only the current immutable version:
 
 ```text
 release/dex-cfg-obfuscator-<version>-maven-repo.zip
 release/dex-cfg-obfuscator-<version>-maven-repo.zip.sha256
 ```
 
+For Maven Central, generate a signed Maven-layout bundle without uploading it:
+
+```bash
+./build-central-bundle.sh
+```
+
+Formal bundles require a clean checkout whose `HEAD` is tagged `v<version>`; an explicit
+`DEXCFG_CENTRAL_PREVIEW=true` mode exists only for local validation and must not be uploaded.
+Account, namespace, GPG, and manual Portal upload steps are documented in
+[doc/MAVEN_CENTRAL.md](doc/MAVEN_CENTRAL.md). Generated repositories and archives are build outputs;
+they are not committed to source control.
+
+## Reproducible Android sample / 可复现 Android 示例
+
+The source-consumer sample covers string-only, CFG-only, both, and R8-enabled release builds without
+publishing the plugin first:
+
+```bash
+./gradlew -p samples/android-consumer :app:assembleRelease \
+  -PsampleProtection=both -PsampleMinify=true --no-configuration-cache
+```
+
+See [samples/android-consumer/README.md](samples/android-consumer/README.md) for every mode and the
+generated report paths.
+
 ## Important limitations / 重要限制
 
 - The current public AGP API does not expose a stable post-R8 DEX transform artifact for this
-  integration. Version `0.0.14` locates the DEX-producing task and modifies its output after staging
+  integration. Version `0.1.0` locates the DEX-producing task and modifies its output after staging
   verification.
-- Version `0.0.14` supports both `mergeProjectDex<Variant>` and application task graphs that expose
+- Version `0.1.0` supports both `mergeProjectDex<Variant>` and application task graphs that expose
   only `mergeDex<Variant>`; explicit package filters still prevent dependency classes from being
   transformed unintentionally.
-- Version `0.0.14` binds each successfully transformed DEX directory to checksummed CFG statistics,
+- Version `0.1.0` binds each successfully transformed DEX directory to checksummed CFG statistics,
   transform configuration, and artifact fingerprints. Cached builds restore those statistics and
   re-run all gates; an OS file lock serializes each DEX transaction, while a pre-transform
   transaction marker detects interrupted evidence commits.
@@ -172,7 +237,7 @@ release/dex-cfg-obfuscator-<version>-maven-repo.zip.sha256
   a variant-wide transaction snapshots every candidate DEX and writable evidence/state/report file;
   any caught later gate or evidence failure restores the complete pre-task artifact set. An abrupt
   process termination remains fail-closed through the pre-transform transaction marker.
-- Version `0.0.14` reads the DEX header and selects the matching opcode table, including `dex.039`
+- Version `0.1.0` reads the DEX header and selects the matching opcode table, including `dex.039`
   `invoke-polymorphic`/`invoke-custom`, instead of forcing the legacy API 20 table.
 - Decompiler rendering is not an API. A character switch may still be displayed as decimal integers.
 - Some register encodings, wide/range instructions, monitor operations, verifier-ambiguous methods,
@@ -224,12 +289,12 @@ release/dex-cfg-obfuscator-<version>-maven-repo.zip.sha256
 - Incremental string evidence stores SHA-256 values (never plaintext) below `build/intermediates`.
   These hashes can reveal short/common strings by dictionary attack to someone who already has the
   local build directory; `clean` removes them, and they must never be committed or distributed.
-  A partial incremental visit conservatively unions compatible prior hashes with current hashes;
-  configuration changes require a clean/rerun proof, while `--rerun-tasks` resets the union as a full
-  snapshot. The secure defaults require known complete coverage for release variants; use
-  `--rerun-tasks` in release CI because a first partial build without prior evidence cannot prove full
-  coverage. Advanced gate properties remain available for exceptional compatibility migrations but
-  are not required in normal configuration.
+  A partial incremental visit conservatively unions compatible prior hashes with current hashes.
+  Strict variants (Release by default) automatically vary the ASM transform input and verify the
+  resulting visits against the scoped class inventory, producing a fresh full snapshot without
+  requiring a special command-line flag. `--rerun-tasks` remains a recovery/diagnostic option.
+  Advanced gate properties remain available for exceptional compatibility migrations but are not
+  required in normal configuration.
 - Dynamic-feature modules are not yet instrumented/audited end-to-end. With the default strict
   plaintext gate, configuring `dynamicFeatures` is rejected instead of claiming whole-bundle proof;
   report-only mode warns and keeps coverage non-FULL.
@@ -243,5 +308,12 @@ configuration reference, report schema, validation workflow, and troubleshooting
 
 ## License / 许可证
 
-No `LICENSE` file has been selected yet. Add the license chosen by the project owner before the
-public release. / 当前尚未选择并加入 `LICENSE` 文件，正式公开发布前需要由项目所有者确定许可证。
+DexCfgObfuscator is licensed under the [Apache License 2.0](LICENSE).
+DexCfgObfuscator 使用 [Apache License 2.0](LICENSE) 开源。
+
+The `stringEncryption` design and migration-compatible API shapes were informed by
+[MegatronKing/StringFog](https://github.com/MegatronKing/StringFog); portions of its ASM
+visitor/carrier implementation were adapted and substantially modified. DEX processing uses
+[google/smali dexlib2](https://github.com/google/smali), and JVM bytecode processing uses
+[OW2 ASM](https://asm.ow2.io/). These projects remain under their own licenses and are not endorsed
+by this project. Full dependency attribution is in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

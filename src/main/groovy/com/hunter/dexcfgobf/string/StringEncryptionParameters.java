@@ -8,7 +8,7 @@ public interface StringEncryptionParameters extends InstrumentationParameters {
     @Input
     Property<String> getRegistryKey();
 
-    /** Force AGP dependency artifact transforms to execute during an explicit full-coverage run. */
+    /** Force AGP artifact transforms to execute for a strict or explicitly requested full run. */
     @Input
     Property<String> getFullCoverageInvocationNonce();
 }

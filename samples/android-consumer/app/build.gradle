@@ -1,0 +1,73 @@
+import com.hunter.dexcfgobf.gradle.ObfuscationLevel
+import com.hunter.dexcfgobf.string.StringEncryptionMode
+
+plugins {
+    id 'com.android.application'
+    id 'io.github.w296488320.dexcfgobf'
+}
+
+def protectionMode = providers.gradleProperty('sampleProtection')
+        .getOrElse('both')
+        .trim()
+        .toLowerCase(Locale.ROOT)
+def supportedProtectionModes = ['string', 'cfg', 'both']
+if (!supportedProtectionModes.contains(protectionMode)) {
+    throw new GradleException("Unsupported -PsampleProtection=${protectionMode}; " +
+            "expected one of ${supportedProtectionModes.join(', ')}")
+}
+
+def enableStringProtection = protectionMode == 'string' || protectionMode == 'both'
+def enableCfgProtection = protectionMode == 'cfg' || protectionMode == 'both'
+def minifyValue = providers.gradleProperty('sampleMinify')
+        .getOrElse('false')
+        .trim()
+        .toLowerCase(Locale.ROOT)
+if (minifyValue != 'true' && minifyValue != 'false') {
+    throw new GradleException("Unsupported -PsampleMinify=${minifyValue}; expected true or false")
+}
+def sampleMinify = minifyValue == 'true'
+
+android {
+    namespace 'com.example.dexcfgsample'
+    compileSdk 36
+
+    defaultConfig {
+        applicationId 'com.example.dexcfgsample'
+        minSdk 23
+        targetSdk 36
+        versionCode 1
+        versionName '1.0'
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled sampleMinify
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+}
+
+dexControlFlowObfuscator {
+    dexObfuscator {
+        enabled enableCfgProtection
+        level ObfuscationLevel.MEDIUM
+        obfClass = ['com.example.dexcfgsample']
+        // Keep Android's entry point simple while still exercising CFG on SamplePayload.
+        blackClass = ['com.example.dexcfgsample.MainActivity']
+    }
+
+    stringEncryption {
+        enabled enableStringProtection
+        mode StringEncryptionMode.BYTES
+        packages = ['com.example.dexcfgsample']
+        excludePackages = ['com.example.dexcfgsample.databinding']
+    }
+}
+
+logger.lifecycle("DexCfg consumer sample protection mode: ${protectionMode} " +
+        "(string=${enableStringProtection}, cfg=${enableCfgProtection}, minify=${sampleMinify})")

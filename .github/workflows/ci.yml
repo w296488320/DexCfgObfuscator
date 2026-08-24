@@ -1,0 +1,98 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Test on JDK 17
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Validate Gradle wrapper
+        uses: gradle/actions/wrapper-validation@v4
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Validate release script syntax
+        run: bash -n build-release.sh build-central-bundle.sh
+
+      - name: Run plugin tests and validation
+        run: ./gradlew test validatePlugins --no-daemon --no-configuration-cache --no-parallel
+
+      - name: Check whitespace errors
+        run: git diff --check
+
+  android-consumer:
+    name: Android sample (${{ matrix.protection }}, minify=${{ matrix.minify }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # This is the regression that proves string encryption does not accidentally enable CFG.
+          - protection: string
+            minify: false
+          # This covers mapping-aware verification when both protections run after R8.
+          - protection: both
+            minify: true
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Validate Gradle wrapper
+        uses: gradle/actions/wrapper-validation@v4
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Install Android API 36
+        run: sdkmanager 'platforms;android-36'
+
+      - name: Build Android consumer sample
+        run: >-
+          ./gradlew -p samples/android-consumer
+          :app:assembleRelease
+          -PsampleProtection=${{ matrix.protection }}
+          -PsampleMinify=${{ matrix.minify }}
+          --no-daemon
+          --no-configuration-cache
+          --no-parallel
+
+      - name: Upload protection report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-sample-report-${{ matrix.protection }}-minify-${{ matrix.minify }}
+          path: samples/android-consumer/app/build/reports/dex-cfg-obfuscator/
+          if-no-files-found: warn
+          retention-days: 7

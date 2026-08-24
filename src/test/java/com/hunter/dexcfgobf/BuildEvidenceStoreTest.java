@@ -296,13 +296,15 @@ public class BuildEvidenceStoreTest {
         Project project = ProjectBuilder.builder().withName("partial-current").build();
         Method merge = DexCfgObfuscatorPlugin.class.getDeclaredMethod(
                 "mergePriorStringEvidence", Project.class, File.class, String.class,
-                Set.class, Map.class, Map.class, Map.class, int.class, int.class,
+                Set.class, Set.class, Set.class, Map.class, Map.class, Map.class,
+                int.class, int.class,
                 String.class, String.class);
         merge.setAccessible(true);
 
         InvocationTargetException failure = assertThrows(InvocationTargetException.class,
                 () -> merge.invoke(null, project, evidence, "digest", currentHashes,
-                        currentClasses, currentMethods, Collections.emptyMap(), 0,
+                        currentClasses.keySet(), currentClasses.keySet(), currentClasses, currentMethods,
+                        Collections.emptyMap(), 0,
                         Integer.MAX_VALUE, "debug", "application DEX"));
 
         assertTrue(failure.getCause() instanceof GradleException);

@@ -37,8 +37,8 @@ public class ObfuscationLevelTest {
         assertEquals(3, ObfuscationLevel.HIGH.getDepth());
 
         DexCfgObfuscatorExtension extension = new DexCfgObfuscatorExtension();
-        assertTrue(extension.getEnabled());
-        assertTrue(extension.getEnabledVariants().isEmpty());
+        DexObfuscatorExtension cfg = extension.getDexObfuscator();
+        assertTrue(cfg.getEnabled());
         assertTrue(extension.getStringEncryption().getFailOnUnsupportedStringConstants());
         assertEquals(1, extension.getStringEncryption().getMinEncryptedStrings());
         assertEquals(1, extension.getStringEncryption().getMinModifiedClasses());
@@ -54,11 +54,11 @@ public class ObfuscationLevelTest {
         assertTrue(extension.getStringEncryption().getEnabledVariants().isEmpty());
         assertTrue(extension.getStringEncryption().getDependencyEvidenceProjects().isEmpty());
         assertTrue(extension.getStringEncryption().getDependencyEvidenceVariants().isEmpty());
-        assertEquals(ObfuscationLevel.MEDIUM, extension.getLevel());
-        assertEquals(0, extension.getMinObfuscatedMethods());
-        assertEquals(0, extension.getMinFlattenedMethods());
-        assertEquals(0.0d, extension.getMinObfuscatedRatio(), 0.0d);
-        assertEquals(100.0d, extension.getMaxSizeIncreasePercent(), 0.0d);
+        assertEquals(ObfuscationLevel.MEDIUM, cfg.getLevel());
+        assertEquals(0, cfg.getMinObfuscatedMethods());
+        assertEquals(0, cfg.getMinFlattenedMethods());
+        assertEquals(0.0d, cfg.getMinObfuscatedRatio(), 0.0d);
+        assertEquals(100.0d, cfg.getMaxSizeIncreasePercent(), 0.0d);
     }
 
     @Test
@@ -84,6 +84,21 @@ public class ObfuscationLevelTest {
     }
 
     @Test
+    public void newCfgModuleEnabledFlagAppliesToEveryBuiltVariant() {
+        DexObfuscatorExtension cfg = new DexCfgObfuscatorExtension().getDexObfuscator();
+        cfg.setEnabled(true);
+        assertTrue(DexCfgObfuscatorPlugin.isCfgEnabledForVariant(cfg.getEnabled(),
+                Collections.emptyList(), "debug", "debug"));
+        assertTrue(DexCfgObfuscatorPlugin.isCfgEnabledForVariant(cfg.getEnabled(),
+                Collections.emptyList(), "freeRelease", "release"));
+        cfg.setEnabled(false);
+        assertFalse(DexCfgObfuscatorPlugin.isCfgEnabledForVariant(cfg.getEnabled(),
+                Collections.emptyList(), "debug", "debug"));
+        assertFalse(DexCfgObfuscatorPlugin.isCfgEnabledForVariant(cfg.getEnabled(),
+                Collections.emptyList(), "release", "release"));
+    }
+
+    @Test
     public void acceptsScalarCollectionAndArrayVariantAndDependencyDslValues() {
         DexCfgObfuscatorExtension extension = new DexCfgObfuscatorExtension();
         extension.enabledVariants("release");
@@ -98,11 +113,11 @@ public class ObfuscationLevelTest {
         assertEquals(Collections.singletonList("hardened"), strings.getEnabledVariants());
         strings.enabledVariants(new String[]{"debug", "release"});
         assertEquals(Arrays.asList("debug", "release"), strings.getEnabledVariants());
-        strings.dependencyEvidenceProjects(":IFAA");
-        assertEquals(Collections.singletonList(":IFAA"),
+        strings.dependencyEvidenceProjects(":feature");
+        assertEquals(Collections.singletonList(":feature"),
                 strings.getDependencyEvidenceProjects());
-        strings.dependencyEvidenceProjects(new String[]{":IFAA", ":security"});
-        assertEquals(Arrays.asList(":IFAA", ":security"),
+        strings.dependencyEvidenceProjects(new String[]{":feature", ":security"});
+        assertEquals(Arrays.asList(":feature", ":security"),
                 strings.getDependencyEvidenceProjects());
         strings.dependencyEvidenceVariants("release");
         assertEquals(Collections.singletonList("release"),
@@ -169,14 +184,14 @@ public class ObfuscationLevelTest {
 
     @Test
     public void copiesConfiguredQualityBudgetsIntoCoreConfig() {
-        DexCfgObfuscatorExtension extension = new DexCfgObfuscatorExtension();
-        extension.setMinObfuscatedMethods(17);
-        extension.setMinFlattenedMethods(5);
-        extension.setMinObfuscatedRatio(0.625d);
-        extension.setMaxSizeIncreasePercent(42.5d);
+        DexObfuscatorExtension cfg = new DexCfgObfuscatorExtension().getDexObfuscator();
+        cfg.setMinObfuscatedMethods(17);
+        cfg.setMinFlattenedMethods(5);
+        cfg.setMinObfuscatedRatio(0.625d);
+        cfg.setMaxSizeIncreasePercent(42.5d);
         ObfuscatorConfig config = new ObfuscatorConfig();
 
-        DexCfgObfuscatorPlugin.applyQualityBudgets(extension, config);
+        DexCfgObfuscatorPlugin.applyQualityBudgets(cfg, config);
 
         assertEquals(17, config.minObfuscatedMethods);
         assertEquals(5, config.minFlattenedMethods);
@@ -186,27 +201,27 @@ public class ObfuscationLevelTest {
 
     @Test
     public void rejectsInvalidQualityBudgets() {
-        DexCfgObfuscatorExtension extension = new DexCfgObfuscatorExtension();
+        DexObfuscatorExtension cfg = new DexCfgObfuscatorExtension().getDexObfuscator();
         ObfuscatorConfig config = new ObfuscatorConfig();
 
-        extension.setMinObfuscatedMethods(-1);
+        cfg.setMinObfuscatedMethods(-1);
         assertThrows(GradleException.class,
-                () -> DexCfgObfuscatorPlugin.applyQualityBudgets(extension, config));
+                () -> DexCfgObfuscatorPlugin.applyQualityBudgets(cfg, config));
 
-        extension.setMinObfuscatedMethods(0);
-        extension.setMinFlattenedMethods(-1);
+        cfg.setMinObfuscatedMethods(0);
+        cfg.setMinFlattenedMethods(-1);
         assertThrows(GradleException.class,
-                () -> DexCfgObfuscatorPlugin.applyQualityBudgets(extension, config));
+                () -> DexCfgObfuscatorPlugin.applyQualityBudgets(cfg, config));
 
-        extension.setMinFlattenedMethods(0);
-        extension.setMinObfuscatedRatio(1.01d);
+        cfg.setMinFlattenedMethods(0);
+        cfg.setMinObfuscatedRatio(1.01d);
         assertThrows(GradleException.class,
-                () -> DexCfgObfuscatorPlugin.applyQualityBudgets(extension, config));
+                () -> DexCfgObfuscatorPlugin.applyQualityBudgets(cfg, config));
 
-        extension.setMinObfuscatedRatio(0.0d);
-        extension.setMaxSizeIncreasePercent(Double.NaN);
+        cfg.setMinObfuscatedRatio(0.0d);
+        cfg.setMaxSizeIncreasePercent(Double.NaN);
         assertThrows(GradleException.class,
-                () -> DexCfgObfuscatorPlugin.applyQualityBudgets(extension, config));
+                () -> DexCfgObfuscatorPlugin.applyQualityBudgets(cfg, config));
     }
 
     @Test
@@ -271,6 +286,19 @@ public class ObfuscationLevelTest {
                 DexCfgObfuscatorPlugin.enforceRequiredDecryptorCfg(
                         strings, config, inconsistentEvidence, "debug"));
         assertTrue(failure.getMessage().contains("no generated decryptor call"));
+    }
+
+    @Test
+    public void emptyProtectedScopeNeedsNoSyntheticFinalDexTarget() {
+        DexCfgObfuscatorPlugin.FinalStringScope scope =
+                DexCfgObfuscatorPlugin.resolveFinalStringScope(
+                        Collections.emptySet(), Collections.emptyMap(),
+                        Collections.emptyMap(), Collections.emptyMap(),
+                        false, null, "debug");
+
+        assertTrue(scope.getPlaintextHashesByFinalClass().isEmpty());
+        assertTrue(scope.getPlaintextHashesByFinalMethod().isEmpty());
+        assertTrue(scope.getGlobalRuntimeFallbackHashes().isEmpty());
     }
 
     @Test

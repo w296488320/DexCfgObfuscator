@@ -30,12 +30,17 @@ DexCfgObfuscator 是一个 Android 字符串与 DEX 控制流混淆 Gradle 插�
 
 | 项目 | 值 |
 |---|---|
-| Gradle Plugin ID | `com.hunter.dexcfgobf` |
-| Group | `com.hunter` |
-| Version | `0.0.14` |
+| Gradle Plugin ID | `io.github.w296488320.dexcfgobf` |
+| Group | `io.github.w296488320` |
+| Version | `0.1.0` |
 | Java | 17 |
 | 当前开发基线 | Gradle 9.6.1、AGP 9.3.1 |
 | DEX 实现 | `com.android.tools.smali:smali-dexlib2:3.0.9` |
+
+当前可复现验证矩阵为 JDK 17、Gradle 9.6.1、AGP 9.3.1，以及 application Release 的
+string-only、CFG-only、双开、R8 开/关 APK 构建；library 的 `PROJECT` 字符串阶段由单元/契约测试覆盖。
+其他 Gradle/AGP 版本、AAB 和 OEM 设备运行行为均不作未经测试的兼容承诺。dynamic feature 的严格
+全局证明当前明确不支持，字符串阶段启用时 configuration cache 也暂不支持。
 
 ## 快速接入（先看这里）
 
@@ -44,54 +49,30 @@ DexCfgObfuscator 是一个 Android 字符串与 DEX 控制流混淆 Gradle 插�
 自定义算法、质量门禁以及 library 的完整说明仍可在后面的“获取插件”“宿主工程接入”和
 “DSL 配置”章节中查阅。
 
-### 第 1 步：准备本地 Maven 仓库
+### 第 1 步：使用 Maven Central 在线仓库
 
-下载并解压发布包 `dex-cfg-obfuscator-0.0.14-maven-repo.zip`。宿主工程需要指向解压后的
-`maven-repo/` 目录，而不是只复制其中的实现 JAR：
-
-```text
-workspace/
-├── YourAndroidApp/
-│   ├── settings.gradle
-│   └── build.gradle
-└── DexCfgObfuscator/
-    └── maven-repo/
-```
-
-也可以把 DexCfgObfuscator 作为 Git submodule 放到宿主工程的 `external/` 或 `tools/` 目录。
+本章默认按 Maven Central 在线接入。确认 `0.1.0` 已在 Central 同步可查后，普通项目不需要下载本仓库、
+复制 JAR 或自行构建插件。只有首个 Central 版本发布前，或需要离线/内部分发时，才
+下载 GitHub Release 中的 `dex-cfg-obfuscator-0.1.0-maven-repo.zip`，解压后使用其中完整的
+`maven-repo/`，不要只复制实现 JAR。
 
 ### 第 2 步：在项目级 `settings.gradle` 注册插件仓库
 
 `pluginManagement` 必须是 `settings.gradle` 的第一个代码块，并且必须能够同时找到实现组件和
-Gradle plugin marker。项目已有 `pluginManagement` 时，把下面的 `maven` 仓库合并进去，不要再创建
-第二个 `pluginManagement`：
+Gradle plugin marker。项目已有该代码块时合并仓库声明，不要创建第二个：
 
 ```groovy
 pluginManagement {
-    def dexObfRepo = providers.gradleProperty('dexCfgObfuscatorRepo')
-            .getOrElse('../DexCfgObfuscator/maven-repo')
-    def repoFile = file(dexObfRepo)
-    if (!repoFile.isAbsolute()) {
-        repoFile = new File(rootDir, dexObfRepo)
-    }
-
     repositories {
-        maven {
-            name = 'DexCfgObfuscatorLocalRepo'
-            url = uri(repoFile)
-        }
-        gradlePluginPortal()
         google()
         mavenCentral()
+        gradlePluginPortal()
     }
 }
 ```
 
-如果每台开发机的目录不同，可在宿主项目的 `gradle.properties` 覆盖路径：
-
-```properties
-dexCfgObfuscatorRepo=/absolute/path/to/DexCfgObfuscator/maven-repo
-```
+使用离线 ZIP 时，在 `repositories` 最前面增加
+`maven { url = uri('/absolute/path/to/maven-repo') }`；其余配置不变。
 
 ### 第 3 步：在项目根 `build.gradle` 声明插件版本
 
@@ -101,18 +82,18 @@ dexCfgObfuscatorRepo=/absolute/path/to/DexCfgObfuscator/maven-repo
 ```groovy
 plugins {
     // 保留这里已有的 Android/Kotlin 插件声明。
-    id 'com.hunter.dexcfgobf' version '0.0.14' apply false
+    id 'io.github.w296488320.dexcfgobf' version '0.1.0' apply false
 }
 ```
 
 如果不在根项目统一管理插件版本，也可以在模块的 `plugins` 块中直接写
-`id 'com.hunter.dexcfgobf' version '0.0.14'`，两种写法选择一种即可，不要重复声明不同版本。
+`id 'io.github.w296488320.dexcfgobf' version '0.1.0'`，两种写法选择一种即可，不要重复声明不同版本。
 根脚本原来没有 `plugins {}` 时，新建的块应放在已有 `buildscript {}` 之后、其他普通配置块之前。
 
 ### 第 4 步：在 application 模块 `build.gradle` 应用并配置
 
-下面的配置让 Debug/Release 都执行字符串保护，而 DEX CFG 只处理 Release。包名采用前缀匹配，
-请替换为自己拥有并完成回归测试的业务包：
+下面把 DEX CFG 与字符串保护作为两个独立功能模块启用。包名采用前缀匹配，请替换为自己拥有并
+完成回归测试的业务包：
 
 ```groovy
 import com.hunter.dexcfgobf.gradle.ObfuscationLevel
@@ -120,23 +101,21 @@ import com.hunter.dexcfgobf.string.StringEncryptionMode
 
 plugins {
     id 'com.android.application'
-    id 'com.hunter.dexcfgobf'
+    id 'io.github.w296488320.dexcfgobf'
 }
 
 dexControlFlowObfuscator {
-    // 只控制 application 的后置 DEX CFG。
-    enabled true
-    enabledVariants = ['release']
-    level ObfuscationLevel.MEDIUM
-
-    obfClass = ['com.example.app']
-    blackClass = [
-            'com.example.app.generated',
-            'com.example.app.bootstrap'
-    ]
+    dexObfuscator {
+        enabled true
+        level ObfuscationLevel.MEDIUM
+        obfClass = ['com.example.app']
+        blackClass = [
+                'com.example.app.generated',
+                'com.example.app.bootstrap'
+        ]
+    }
 
     stringEncryption {
-        // 独立于外层 enabled；application 会处理完整依赖图中命中 packages 的 class。
         enabled true
         mode StringEncryptionMode.BYTES
         packages = ['com.example.app']
@@ -145,10 +124,20 @@ dexControlFlowObfuscator {
 }
 ```
 
-如果只需要字符串保护、不需要 CFG，将外层 `enabled` 改为 `false` 即可；内层
-`stringEncryption.enabled true` 仍然生效。普通接入只需要上面四个字符串字段。最终 DEX 明文、
+`dexControlFlowObfuscator {}` 只是功能容器；`dexObfuscator {}` 与 `stringEncryption {}` 使用各自的
+`enabled` 独立开关。`0.1.0` 的 canonical CFG DSL 不再提供 `enabledVariants`，是否启用 CFG 由宿主
+直接决定。如果只需要字符串保护，将 `dexObfuscator.enabled` 设为 `false` 即可。普通接入只需要
+上面四个字符串字段。最终 DEX 明文、
 不安全跳过、主动过滤、最小加密数量、解密器保护和 release 完整覆盖率等安全门禁已经采用安全默认值，
 无需把它们逐项复制到业务脚本。
+
+从 `0.0.15` 或 `0.0.16` 升级到 `0.1.0` 时，把原来直接写在
+`dexControlFlowObfuscator {}` 下的 `enabled`、
+`level`、`obfClass`、`blackClass` 和 CFG 质量/对抗字段整体移入 `dexObfuscator {}`，并删除 CFG 的
+`enabledVariants`。`stringEncryption {}` 仍与 `dexObfuscator {}` 同级；其 standalone-library
+`enabledVariants` 和旧链路 `dependencyEvidenceVariants` 不是 CFG 选择器，仍然保留。
+不要使用 `0.0.16`；`0.1.0` 修复了真实 Gradle 装饰 Extension 实例下的 nested mutation
+callback，否则消费工程配置嵌套模块时可能失败。
 
 ### 第 5 步：需要独立发布受保护 AAR 时，在 library 模块应用
 
@@ -161,13 +150,10 @@ import com.hunter.dexcfgobf.string.StringEncryptionMode
 
 plugins {
     id 'com.android.library'
-    id 'com.hunter.dexcfgobf'
+    id 'io.github.w296488320.dexcfgobf'
 }
 
 dexControlFlowObfuscator {
-    // library 不注册后置 DEX CFG；这里只配置它自己的字符串保护范围。
-    enabled false
-    obfClass = ['com.example.security']
     stringEncryption {
         enabled true
         mode StringEncryptionMode.BYTES
@@ -182,11 +168,12 @@ dexControlFlowObfuscator {
 
 ### 第 6 步：构建并检查报告
 
-当前版本启用字符串保护时需要关闭 configuration cache。安全默认值会要求 Release 具有完整覆盖
-证明，因此 Release 构建应使用 `--rerun-tasks` 强制重新执行上游变换：
+当前版本启用字符串保护时需要关闭 configuration cache。默认严格的 Release 会由插件
+自动强制一次完整 ASM 遍历，并用 scoped class inventory 核对实际访问范围，用户无需
+手动添加 `--rerun-tasks`：
 
 ```bash
-./gradlew :app:assembleRelease --rerun-tasks --no-configuration-cache
+./gradlew :app:assembleRelease --no-configuration-cache
 ```
 
 application 报告位于：
@@ -198,7 +185,7 @@ app/build/reports/dex-cfg-obfuscator/release.json
 独立验证 library 时可以执行：
 
 ```bash
-./gradlew :securityLibrary:bundleReleaseAar --rerun-tasks --no-configuration-cache
+./gradlew :securityLibrary:bundleReleaseAar --no-configuration-cache
 ```
 
 library 没有 application 最终 DEX，因此不会生成 application 的 schema-10 JSON；它会在 AAR 打包前
@@ -251,7 +238,7 @@ library 没有 application 最终 DEX，因此不会生成 application 的 schem
 - debug 未开启 minify 时优先锚定 `mergeProjectDex<Variant>`；若应用任务图只提供
   `mergeDex<Variant>`，则安全回退到该任务，并继续只变换显式白名单类。
 - release 开启 minify 时，在 `minify<Variant>WithR8` 后处理最终 DEX。
-- release 读取官方 `SingleArtifact.OBFUSCATION_MAPPING_FILE`，将 `obfClass` 中的原始类名前缀
+- release 读取官方 `SingleArtifact.OBFUSCATION_MAPPING_FILE`，将 `dexObfuscator.obfClass` 中的原始类名前缀
   解析成 R8 后的精确类名集合。
 - mapping 缺失或一个目标类都没有解析出来时，release 构建直接失败，避免静默漏混淆。
 - 支持 `-repackageclasses` 场景，不需要直接放开整个重打包目录。
@@ -371,8 +358,9 @@ try/catch 默认支持，不需要宿主配置额外开关：
 8. 提交中途失败时使用 backup 恢复。
 
 所有 producer 目录都拿到本轮统计或与当前产物严格绑定的缓存证据后，插件先写
-schema-10 报告，再对 **variant 聚合统计** 统一执行 `minObfuscatedMethods`、
-`minFlattenedMethods`、`minObfuscatedRatio` 和 `maxSizeIncreasePercent`。这样 fresh/cached
+schema-10 报告，再对 **variant 聚合统计** 统一执行 `dexObfuscator.minObfuscatedMethods`、
+`dexObfuscator.minFlattenedMethods`、`dexObfuscator.minObfuscatedRatio` 和
+`dexObfuscator.maxSizeIncreasePercent`。这样 fresh/cached
 与多目录语义一致。任何 fresh CFG 就地改写前，variant 级事务会备份所有候选 DEX，以及本轮
 可能写入的 evidence、state、pending 和 report。后续质量/字符串/明文/对抗门禁或 evidence
 提交出现可捕获失败时，插件会恢复整组任务前产物；若进程被强制终止，则 pending marker 会在
@@ -423,40 +411,36 @@ outputs 执行常量池门禁。最终 DEX 的 CFG 防护和全局明文证明�
 
 ## 4. 获取插件
 
-### 4.1 使用发布 ZIP（推荐给外部使用者）
+### 4.1 Maven Central（推荐）
+
+这是普通使用者的默认接入方式。确认 `0.1.0` 已在 Central 同步可查后，在
+`pluginManagement.repositories` 中保留 `mavenCentral()`，再使用
+`io.github.w296488320.dexcfgobf` 即可。使用者不需要 Sonatype 账号、GPG 或发布 Token。
+
+### 4.2 GitHub Release ZIP（离线/内部使用）
 
 发布包不是单独复制的 JAR，而是包含实现 JAR、POM、Gradle plugin marker 和校验文件的文件夹式
-Maven 仓库：
+Maven 仓库，并且只包含当前版本：
 
 ```text
-dex-cfg-obfuscator-0.0.14-maven-repo.zip
+dex-cfg-obfuscator-0.1.0-maven-repo.zip
 └── maven-repo/
-    └── com/hunter/...
+    └── io/github/w296488320/...
 ```
 
 解压到稳定目录，然后在宿主的 `settings.gradle` 指向 `maven-repo/`。
 
-### 4.2 clone 或 Git submodule
+### 4.3 维护者/开发验证：从源码发布到本地目录
 
-推荐让插件仓库和 Android 工程处于同级目录：
-
-```text
-workspace/
-├── YourAndroidApp/
-└── DexCfgObfuscator/
-    └── maven-repo/
-```
-
-也可以将本项目作为 submodule 放入宿主的 `tools/` 或 `external/` 目录，只要仓库路径配置正确即可。
-
-### 4.3 从源码发布到本地目录
+本节不是普通使用者的接入步骤，仅用于插件维护、源码开发验证或生成隔离的本地仓库。
 
 ```bash
 cd DexCfgObfuscator
 ./gradlew clean test validatePlugins publish
 ```
 
-`publish` 会把实现组件和 plugin marker 一起写入本仓库的 `maven-repo/`。
+`publish` 会把实现组件和 plugin marker 一起写入被 `.gitignore` 排除的 `maven-repo/`。也可以通过
+`-PdexCfgObfuscatorPublishRepo=/absolute/output/path` 指定隔离输出目录。
 
 ## 5. 宿主工程接入
 
@@ -464,57 +448,32 @@ cd DexCfgObfuscator
 
 ```groovy
 pluginManagement {
-    def dexObfRepo = providers.gradleProperty("dexCfgObfuscatorRepo")
-            .getOrElse("../DexCfgObfuscator/maven-repo")
-    def repoFile = file(dexObfRepo)
-    if (!repoFile.isAbsolute()) {
-        repoFile = new File(rootDir, dexObfRepo)
-    }
-
     repositories {
-        maven {
-            name = "DexCfgObfuscatorLocalRepo"
-            url = uri(repoFile)
-        }
-        gradlePluginPortal()
         google()
         mavenCentral()
+        gradlePluginPortal()
     }
 }
 ```
 
-自定义路径可以放进宿主的 `gradle.properties`：
-
-```properties
-dexCfgObfuscatorRepo=/absolute/path/to/DexCfgObfuscator/maven-repo
-```
+使用 ZIP 时，在 `repositories` 的第一项添加本地 Maven 路径。
 
 ### 5.2 Kotlin `settings.gradle.kts`
 
 ```kotlin
 pluginManagement {
-    val configured = providers.gradleProperty("dexCfgObfuscatorRepo")
-        .orElse("../DexCfgObfuscator/maven-repo")
-        .get()
-    val candidate = file(configured)
-    val repoDir = if (candidate.isAbsolute) candidate else rootDir.resolve(configured)
-
     repositories {
-        maven {
-            name = "DexCfgObfuscatorLocalRepo"
-            url = uri(repoDir)
-        }
-        gradlePluginPortal()
         google()
         mavenCentral()
+        gradlePluginPortal()
     }
 }
 ```
 
 ### 5.3 Groovy application 模块 `build.gradle`
 
-以下模块示例假定项目根 `build.gradle` 已用 `apply false` 声明 `0.0.14`。如果没有项目级声明，
-才在模块的插件 ID 后追加 `version '0.0.14'`。
+以下模块示例假定项目根 `build.gradle` 已用 `apply false` 声明 `0.1.0`。如果没有项目级声明，
+才在模块的插件 ID 后追加 `version '0.1.0'`。
 
 ```groovy
 import com.hunter.dexcfgobf.gradle.ObfuscationLevel
@@ -522,36 +481,36 @@ import com.hunter.dexcfgobf.string.StringEncryptionMode
 
 plugins {
     id 'com.android.application'
-    id 'com.hunter.dexcfgobf'
+    id 'io.github.w296488320.dexcfgobf'
 }
 
 dexControlFlowObfuscator {
-    enabled true
-    // 可选：CFG 仅处理 release；字符串阶段仍由自己的 enabled 独立控制全部 variant。
-    enabledVariants = ['release']
-    level ObfuscationLevel.MEDIUM
+    dexObfuscator {
+        enabled true
+        level ObfuscationLevel.MEDIUM
 
-    // 前缀匹配；只填写自己拥有并经过测试的业务代码。
-    obfClass = [
-            'com.example.app',
-            'com.example.security'
-    ]
+        // 前缀匹配；只填写自己拥有并经过测试的业务代码。
+        obfClass = [
+                'com.example.app',
+                'com.example.security'
+        ]
 
-    // 启动、动态加载、极端大方法或暂时不想处理的区域可以排除。
-    blackClass = [
-        'com.example.app.bootstrap',
-        'com.example.app.generated'
-    ]
+        // 启动、动态加载、极端大方法或暂时不想处理的区域可以排除。
+        blackClass = [
+            'com.example.app.bootstrap',
+            'com.example.app.generated'
+        ]
 
-    // 可选 release 质量门禁；请按真实项目基线设置。
-    minObfuscatedMethods = 100
-    // 只统计强平坦化方法，安全重排不计入；默认 0 表示不限制。
-    minFlattenedMethods = 50
-    minObfuscatedRatio = 0.30
-    maxSizeIncreasePercent = 50
+        // 可选 release 质量门禁；请按真实项目基线设置。
+        minObfuscatedMethods = 100
+        // 只统计强平坦化方法，安全重排不计入；默认 0 表示不限制。
+        minFlattenedMethods = 50
+        minObfuscatedRatio = 0.30
+        maxSizeIncreasePercent = 50
+    }
 
     stringEncryption {
-        // 独立于外层 enabled；application 的 ALL scope 会覆盖完整依赖图。
+        // application 的 ALL scope 会覆盖完整依赖图。
         enabled true
         mode StringEncryptionMode.BYTES
         packages = ['com.example.app', 'com.example.security']
@@ -561,7 +520,7 @@ dexControlFlowObfuscator {
 ```
 
 字符串门禁已经采用安全默认值，普通 App 不需要再抄写数量、泄漏、覆盖率或 dependency evidence
-配置。Release 使用 `--rerun-tasks` 获得默认要求的完整覆盖证明。
+配置。Release 会自动完成默认要求的完整覆盖证明。
 
 ### 5.4 Kotlin application 模块 `build.gradle.kts`
 
@@ -571,15 +530,17 @@ import com.hunter.dexcfgobf.string.StringEncryptionMode
 
 plugins {
     id("com.android.application")
-    id("com.hunter.dexcfgobf")
+    id("io.github.w296488320.dexcfgobf")
 }
 
 dexControlFlowObfuscator {
-    enabled = true
-    level = ObfuscationLevel.MEDIUM
-    obfClass = listOf("com.example.app", "com.example.security")
-    blackClass = listOf("com.example.app.bootstrap", "com.example.app.generated")
-    minFlattenedMethods = 50 // 安全重排不计入
+    dexObfuscator {
+        enabled = true
+        level = ObfuscationLevel.MEDIUM
+        obfClass = listOf("com.example.app", "com.example.security")
+        blackClass = listOf("com.example.app.bootstrap", "com.example.app.generated")
+        minFlattenedMethods = 50 // 安全重排不计入
+    }
     stringEncryption {
         enabled = true
         mode = StringEncryptionMode.BYTES
@@ -595,8 +556,9 @@ dexControlFlowObfuscator {
 import com.hunter.dexcfgobf.string.StringEncryptionMode
 
 dexControlFlowObfuscator {
-    // 只关闭 application 的后置 DEX CFG。
-    enabled false
+    dexObfuscator {
+        enabled false
+    }
     stringEncryption {
         enabled true
         mode StringEncryptionMode.BYTES
@@ -608,21 +570,19 @@ dexControlFlowObfuscator {
 
 ### 5.6 Android library
 
-library 模块也可应用 `com.hunter.dexcfgobf`，但只运行 `PROJECT` scope 的前置字符串阶段。仅当要
+library 模块也可应用 `io.github.w296488320.dexcfgobf`，但只运行 `PROJECT` scope 的前置字符串阶段。仅当要
 独立构建或发布受保护 AAR 时才需要这样配置；被 application 消费的普通 module/AAR/JAR 已由 App
-的 `ALL` scope 自动处理。外层 `enabled` 不会为 library 注册 CFG 任务。
+的 `ALL` scope 自动处理。library 不注册后置 DEX CFG，只需配置字符串模块。
 
 ```groovy
 import com.hunter.dexcfgobf.string.StringEncryptionMode
 
 plugins {
     id 'com.android.library'
-    id 'com.hunter.dexcfgobf'
+    id 'io.github.w296488320.dexcfgobf'
 }
 
 dexControlFlowObfuscator {
-    enabled false
-    obfClass = ['com.example.library']
     stringEncryption {
         enabled true
         // 高级用法：独立 library 只发布 release AAR 时可限制字符串阶段的 variant。
@@ -652,21 +612,23 @@ application 最终 DEX/APK/AAB 的全局证明。发布 CI 仍应解包最终 AA
 
 #### 5.6.1 旧版预加密 library evidence 兼容（高级）
 
-`0.0.14` 的普通 application 路径不需要 `dependencyEvidenceProjects` 或
+`0.1.0` 的普通 application 路径不需要 `dependencyEvidenceProjects` 或
 `dependencyEvidenceVariants`：App 的 `ALL` scope 会直接改写完整依赖图，并在最终 DEX 上统一验证。
 这两个字段只用于迁移旧构建链：同一 Gradle 构建中的 project library 已经在 App 插桩之前由旧版流程
 预加密，App 因而看不到它的原始候选字符串，但仍需把该 library 的旧 member-scoped evidence 合并到
 最终 DEX 门禁。此时才显式配置：
 
 ```groovy
-stringEncryption {
-    enabled true
-    mode StringEncryptionMode.BYTES
-    packages = ['com.example']
-    excludePackages = ['com.example.databinding']
+dexControlFlowObfuscator {
+    stringEncryption {
+        enabled true
+        mode StringEncryptionMode.BYTES
+        packages = ['com.example']
+        excludePackages = ['com.example.databinding']
 
-    dependencyEvidenceProjects = [':legacySecurityLibrary']
-    dependencyEvidenceVariants = ['release']
+        dependencyEvidenceProjects = [':legacySecurityLibrary']
+        dependencyEvidenceVariants = ['release']
+    }
 }
 ```
 
@@ -675,14 +637,14 @@ AAR/JAR 都不要配置它们。
 
 ### 5.7 构建
 
-当前 `0.0.14` 的 DEX 适配层仍通过 producer 任务输出执行就地后处理。插件会记录成功变换后的 DEX
+当前 `0.1.0` 的 DEX 适配层仍通过 producer 任务输出执行就地后处理。插件会记录成功变换后的 DEX
 目录内容指纹；连续增量构建复用完全相同的 producer 输出时会直接跳过，源码或上游 DEX 变化后则重新处理。
-发布构建必须保留 `--rerun-tasks`，让默认完整覆盖门禁看到本轮全部 class；如需同时清理，
-可在同一命令中追加 `clean`，但 `clean` 本身不能替代该标记：
+默认严格的发布构建会自动使 ASM 变换的输入失效，并核对本轮全部已选 class；普通发布命令不需要
+`--rerun-tasks`。只有排查上游缓存或修复已损坏 evidence 时才需要它：
 
 ```bash
-./gradlew :app:assembleRelease --rerun-tasks --no-configuration-cache
-# 可选的干净构建
+./gradlew :app:assembleRelease --no-configuration-cache
+# 可选的恢复/诊断构建
 ./gradlew clean :app:assembleRelease --rerun-tasks --no-configuration-cache
 ```
 
@@ -696,13 +658,15 @@ AAR/JAR 都不要配置它们。
 
 ## 6. DSL 配置
 
-宿主只公开稳定且确实需要选择的字段。结构验证、try/catch 支持、类型分离、payload 重定位、
-多模板和 JSON 报告默认固定开启。
+`dexControlFlowObfuscator {}` 是可扩展的功能容器。当前包含 `dexObfuscator {}` 和
+`stringEncryption {}` 两个独立模块，后续功能也应以同级模块加入。结构验证、try/catch 支持、
+类型分离、payload 重定位、多模板和 JSON 报告默认固定开启。
+
+`dexObfuscator {}` 配置 application 的后置 DEX CFG：
 
 | 字段 | 类型 | 默认值 | 说明 |
 |---|---|---|---|
-| `enabled` | `boolean` | `true` | 只控制 application 的后置 DEX CFG，不控制字符串阶段 |
-| `enabledVariants` | `List<String>` | `[]` | CFG 生效的 variant/buildType；空表示全部 application variant，不影响字符串阶段 |
+| `enabled` | `boolean` | `true` | 是否启用 application 的后置 DEX CFG；不控制其他功能模块 |
 | `level` | `ObfuscationLevel` | `MEDIUM` | `LOW`、`MEDIUM`、`HIGH` |
 | `obfClass` | `List<String>` | `[]` | 要处理的包或类前缀 |
 | `blackClass` | `List<String>` | `[]` | 追加到内置排除表的前缀 |
@@ -713,7 +677,7 @@ AAR/JAR 都不要配置它们。
 | `adversarialCommands` | `List<List<String>>` | `[]` | 可选外部回归命令，非 shell 字符串 |
 | `adversarialTimeoutSeconds` | `int` | `300` | 每个外部命令的超时秒数 |
 
-`stringEncryption {}` 是同一插件内的独立前置阶段：
+`stringEncryption {}` 是同一容器内的独立前置阶段：
 
 | 字段 | 默认值 | 说明 |
 |---|---|---|
@@ -723,8 +687,8 @@ AAR/JAR 都不要配置它们。
 | `algorithm` | `null` | 可选构建期算法对象；自定义时仍需提供匹配的 runtime `implementation` |
 | `keyGenerator` / `kg` | 内置 | 构建期 key 生成对象或一/二参数 Groovy Closure |
 | `mode` | `BYTES` | `BYTES` 或 `BASE64`；兼容 `bytes/base64/text`，其中 `text` 映射到 `BASE64` |
-| `packages` / `fogPackages` | 未配置 | 未配置时继承外层 `obfClass`；显式 `[]` 不继承并会因无目标包而失败。application 在完整依赖图中匹配 |
-| `excludePackages` | 未配置 | 未配置时继承外层 `blackClass`；显式 `[]` 表示不继承 CFG 排除项 |
+| `packages` / `fogPackages` | 未配置 | 未配置时继承 `dexObfuscator.obfClass`；显式 `[]` 不继承并会因无目标包而失败。application 在完整依赖图中匹配 |
+| `excludePackages` | 未配置 | 未配置时继承 `dexObfuscator.blackClass`；显式 `[]` 表示不继承 CFG 排除项 |
 | `seed` | `0x6D0F27BD4A91C35E` | 内置确定性 key 派生 seed，不应当作秘密 |
 | `maxStringBytes` | `4096` | 单个 UTF-8 明文上限；密文和 key 另有字节码预算 |
 | `bridgeClass` | `<namespace>.DexStringDecryptor_<projectHash>` | 生成解密桥 FQCN，必须是顶层类；默认跨模块避重名 |
@@ -793,13 +757,15 @@ public byte[] generate(String value);
 典型配置：
 
 ```groovy
-stringEncryption {
-    enabled true
-    implementation 'com.example.security.CustomStringCipher'
-    kg = new CustomKeyGenerator()
-    mode StringEncryptionMode.BYTES
-    fogPackages = ['com.example']
-    excludePackages = []
+dexControlFlowObfuscator {
+    stringEncryption {
+        enabled true
+        implementation 'com.example.security.CustomStringCipher'
+        kg = new CustomKeyGenerator()
+        mode StringEncryptionMode.BYTES
+        fogPackages = ['com.example']
+        excludePackages = []
+    }
 }
 ```
 
@@ -837,6 +803,17 @@ checked exception。静态模式设置 `decryptorStatic true`，并要求 public
 旧 StringFog 与本字符串阶段同时启用会直接失败，避免同一 class 被双重插桩。嵌套
 `stringFog {}` / `stringfog {}` 是本插件内部别名，不是旧的顶层扩展。
 
+### 6.4 从 0.0.15/0.0.16 迁移到 0.1.0
+
+`0.1.0` 将各项防护明确拆为功能模块。把旧配置中直接位于 `dexControlFlowObfuscator {}` 下的
+`enabled`、`level`、`obfClass`、`blackClass`、CFG 质量门禁和对抗命令整体移入
+`dexObfuscator {}`。删除 CFG 的 `enabledVariants`，由宿主使用 `dexObfuscator.enabled` 直接决定
+是否启用。`stringEncryption {}` 无需移动；其 `enabledVariants` 仍只用于 standalone library 的
+高级发布选择，`dependencyEvidenceVariants` 仍是旧 evidence 链路的兼容字段。
+
+`0.0.16` 不应继续使用：它在测试对象上可工作，但真实 Gradle 装饰 Extension 实例没有正确触发
+nested mutation callback。`0.1.0` 修复该回调，嵌套模块配置才会可靠写入实际 Extension。
+
 以下是 **CFG 阶段** 的内置排除前缀：
 
 ```text
@@ -849,7 +826,8 @@ com/google/
 
 它们不会隐式套到字符串阶段。字符串阶段只自动跳过生成 bridge、配置的 runtime implementation、
 `BuildConfig`、`R/R2`，以及显式 `excludePackages`；`packages` 和 `excludePackages` 独立继承。
-`obfClass`、`blackClass`、`packages` 和 `excludePackages` 都是前缀匹配，不是正则表达式。请尽量使用
+`dexObfuscator.obfClass`、`dexObfuscator.blackClass`、`packages` 和 `excludePackages` 都是前缀匹配，
+不是正则表达式。请尽量使用
 完整、明确的业务包前缀，避免 `com.foo` 同时匹配到不希望处理的 `com.foobar`。
 
 ## 7. 混淆等级
@@ -865,19 +843,21 @@ com/google/
 
 ## 8. 对抗命令
 
-`adversarialCommands` 用于在混淆后自动运行 JADX、内部校验器或其他回归工具。每项必须是参数数组，
+`dexObfuscator.adversarialCommands` 用于在混淆后自动运行 JADX、内部校验器或其他回归工具。每项必须是参数数组，
 插件使用 `ProcessBuilder` 直接执行，不经过 shell 二次解析。
 
 ```groovy
 dexControlFlowObfuscator {
-    // tools/check-obfuscated-dex 是可执行文件，第一个参数不是一整段 shell 命令。
-    adversarialCommands = [[
-            'tools/check-obfuscated-dex',
-            '--dex-dir', '{dexDir}',
-            '--report', '{report}',
-            '--variant', '{variant}'
-    ]]
-    adversarialTimeoutSeconds = 300
+    dexObfuscator {
+        // tools/check-obfuscated-dex 是可执行文件，第一个参数不是一整段 shell 命令。
+        adversarialCommands = [[
+                'tools/check-obfuscated-dex',
+                '--dex-dir', '{dexDir}',
+                '--report', '{report}',
+                '--variant', '{variant}'
+        ]]
+        adversarialTimeoutSeconds = 300
+    }
 }
 ```
 
@@ -915,21 +895,21 @@ dexControlFlowObfuscator {
 泄漏数量、运行时载荷泄漏、全池碰撞，以及 const/static/annotation/call-site 四类扫描计数。报告
 不会写入明文、原文 SHA-256、密文或 key；字符串阶段关闭时仍输出默认值。
 
-application 的后置 CFG 与外层 `enabled false` 的 string-only 路径都会写 JSON 并执行最终 DEX
+application 的后置 CFG 与 `dexObfuscator.enabled false` 的 string-only 路径都会写 JSON 并执行最终 DEX
 明文门禁。library 不写 application schema-10 JSON，但会在 AAR 打包前执行独立的常量池压实、JVM
 运行时载荷门禁与全池碰撞诊断，并将统计、已登记 SHA-256、class artifact 指纹和配置摘要写入带
 校验和的内部 evidence；它仍没有最终 application DEX，不能给出消费 App 的全局证明。ASM 是增量任务，
 `stringCoverageStatus=FULL` 表示本次完整执行，`CACHED_FULL` 表示从与当前产物/配置严格绑定的
 完整证据恢复并重新扫描；二者都可执行数量门禁。`PARTIAL_OR_FULL/CACHED_PARTIAL/
-UNKNOWN_INCREMENTAL` 需要用 `--rerun-tasks` 刷新。默认的 `failOnUnknownCoverage true` 与
-`failOnUnknownCoverageVariants = ['release']` 会把这一要求作为 release 硬门禁。证据缺失、损坏或
-指纹不匹配时，严格明文门禁会 fail closed。
+UNKNOWN_INCREMENTAL` 不能通过严格门禁。默认的 `failOnUnknownCoverage true` 与
+`failOnUnknownCoverageVariants = ['release']` 会自动强制 Release 的完整 ASM 遍历，并用当前类清单核对后才标记
+`FULL`。证据缺失、损坏或指纹不匹配时，严格明文门禁仍会 fail closed；`--rerun-tasks` 只作为
+恢复或诊断手段。
 
 Library 在没有本轮 ASM snapshot 的缓存路径上，只接受同时匹配当前 class artifact 指纹与字符串
-配置摘要的 evidence；严格模式下缺失、损坏或不匹配都会失败。非 `--rerun-tasks` 构建可能只访问
-变化的 class，此时插件会将当前 hash 与同配置的历史 hash 做保守并集；配置变化时拒绝混用并要求
-clean/`--rerun-tasks`，完整 rerun 则重置该并集。首次 partial 构建没有历史 evidence 时只能标记
-非 `FULL`；安全默认值已经让 release fail closed，因此 release CI 必须使用 `--rerun-tasks`。
+配置摘要的 evidence；严格模式下缺失、损坏或不匹配都会失败。非严格 variant 的增量构建可能只访问
+变化的 class，此时插件会将当前 hash 与同配置的历史 hash 做保守并集。严格 Release 不依赖该并集：
+插件会自动进行完整遍历并用 scoped inventory 证明覆盖范围。
 
 application schema-10 JSON 中，`evidence.source` 的取值为：`CURRENT_BUILD`（本次生成）、
 `CACHED_VERIFIED`（与当前产物/配置
@@ -958,7 +938,7 @@ jq '.methods[] | select(.mode == "flattened") | {owner,name,template,dispatcherR
 
 - `dexFailed` 必须为 0。
 - `methodsObfuscated` 和 `obfuscatedRatio` 不应异常下降。
-- 如果配置了 `minFlattenedMethods`，variant 聚合 `methodsFlattened` 必须达到基线；
+- 如果配置了 `dexObfuscator.minFlattenedMethods`，variant 聚合 `methodsFlattened` 必须达到基线；
   `methodsReordered` 不计入该门禁。
 - `sizeIncreasePercent` 不应突然增长。
 - `alreadyObfuscated` 在干净构建中应接近 0。
@@ -1034,6 +1014,9 @@ adb shell cmd package compile -m verify -f com.example.app
 
 ## 11. 生成外部分发包
 
+本章面向插件维护者和离线/内部分发。普通 Maven Central 使用者不需要执行这些命令，也不需要
+下载 Maven-repository ZIP。
+
 ```bash
 chmod +x build-release.sh
 ./build-release.sh
@@ -1042,23 +1025,27 @@ chmod +x build-release.sh
 脚本执行：
 
 1. `clean test validatePlugins`。
-2. `publish` 到本仓库 `maven-repo/`。
+2. `publish` 到隔离的临时 Maven 仓库。
 3. 校验实现 JAR 和 Gradle plugin marker。
-4. 打包 `maven-repo/`、根 README 和中英文文档。
+4. 只打包当前版本、根 README、中英文文档、`LICENSE` 和第三方声明。
 5. 生成 SHA-256 文件。
 
-接收方只需解压 ZIP、配置 `pluginManagement.repositories`、应用相同版本号，不需要安装到
+离线接收方只需解压 ZIP、配置 `pluginManagement.repositories`、应用相同版本号，不需要安装到
 `mavenLocal()`。
+
+需要发布到 Maven Central 时，使用 `./build-central-bundle.sh` 生成带 PGP 签名的 Maven-layout ZIP；
+该脚本不会上传。账号注册、namespace、GPG 和 Portal 手工发布步骤见
+[MAVEN_CENTRAL.md](MAVEN_CENTRAL.md)。
 
 ## 12. 常见问题
 
 ### 12.1 `Plugin ... was not found`
 
-检查：
+从 Maven Central 获取时检查 `mavenCentral()` 和 canonical plugin ID；从 ZIP 获取时检查：
 
 - Maven 路径是否指向解压后的 `maven-repo/`，而不是 ZIP 或 JAR。
 - `pluginManagement.repositories` 是否位于 `settings.gradle(.kts)`。
-- marker 目录中是否存在 `com.hunter.dexcfgobf.gradle.plugin-<version>.pom`。
+- marker 目录中是否存在 `io.github.w296488320.dexcfgobf.gradle.plugin-<version>.pom`。
 - 插件版本是否与仓库中的版本目录一致。
 
 ### 12.2 release 提示找不到 mapping
@@ -1067,11 +1054,12 @@ release + minify 路径要求 R8 `mapping.txt`。检查：
 
 - `minifyEnabled true` 的变体是否真的执行 R8。
 - 是否自定义了会删除或移动 mapping 的任务。
-- `obfClass` 是否填写的是 R8 前的原始类名。
+- `dexObfuscator.obfClass` 是否填写的是 R8 前的原始类名。
 
 ### 12.3 `R8 mapping resolved zero included classes`
 
-通常表示 `obfClass` 没有匹配到业务类，或者目标类被 `blackClass`/内置前缀排除。使用更精确的原始
+通常表示 `dexObfuscator.obfClass` 没有匹配到业务类，或者目标类被
+`dexObfuscator.blackClass`/内置前缀排除。使用更精确的原始
 包名，并检查 R8 mapping 左侧类名。
 
 ### 12.4 日志出现 `fallback->reorder`
@@ -1082,19 +1070,19 @@ range/wide 约束或方法结构不适合强模板。最终 `dexFailed=0` 且应
 
 ### 12.5 `DEX size increase ... exceeds maxSizeIncreasePercent`
 
-说明 variant 聚合 DEX 体积增长超过当前 `maxSizeIncreasePercent` 配置（默认 `100.0`）。
+说明 variant 聚合 DEX 体积增长超过当前 `dexObfuscator.maxSizeIncreasePercent` 配置（默认 `100.0`）。
 此门禁失败前 schema-10 报告可能已刷新，但 variant 级事务会把报告、evidence/state/pending 和
 所有 fresh 目录 DEX 一起恢复到任务开始前；下次 clean `--rerun-tasks` 会从 producer 原始产物
 重新执行。优先：
 
-- 查看日志是否出现 `skip unchanged already-obfuscated DEX dir`；若没有且怀疑使用了旧插件，确认宿主版本为 `0.0.14`。
+- 查看日志是否出现 `skip unchanged already-obfuscated DEX dir`；若没有且怀疑使用了旧插件，确认宿主版本为 `0.1.0`。
 - 将 `HIGH` 降为 `MEDIUM` 或 `LOW`。
-- 缩小 `obfClass` 范围。
-- 将超大/大量 switch 的生成代码加入 `blackClass`。
+- 缩小 `dexObfuscator.obfClass` 范围。
+- 将超大/大量 switch 的生成代码加入 `dexObfuscator.blackClass`。
 
 ### 12.6 连续第二次构建突然膨胀
 
-`0.0.14` 仍是 producer 输出目录的就地后处理模式，但会保存带校验和的 CFG evidence，其中包含目录指纹、
+`0.1.0` 仍是 producer 输出目录的就地后处理模式，但会保存带校验和的 CFG evidence，其中包含目录指纹、
 变换配置摘要和统计。只有当前 DEX 字节精确匹配 evidence 中的 post-transform 指纹，且配置摘要一致时才跳过。
 evidence 缺失、损坏、只剩 legacy state 或任一摘要失配都会 fail closed，并要求 clean `--rerun-tasks`。
 producer 重新生成、源码改变或 DEX 内容变化会触发正常混淆，避免连续构建再次扩大原始 switch padding。
@@ -1163,8 +1151,9 @@ producer 重新生成、源码改变或 DEX 内容变化会触发正常混淆，
 - `BYTES` 会增加方法体和 DEX 体积，并按完整 JVM Code 保守预算让受影响的整个方法回退
   `BASE64`；`BASE64` 会保留密文与 key 的文本承载形态。同一方法不会逐常量混用 carrier；两种
   整方法方案都放不下时插件会在写出 class 前失败。
-- 生成 bridge 和自定义 implementation 不会递归进入字符串阶段；是否进入后续 CFG 取决于外层过滤。
-  若它们位于 `blackClass` 或 `obfClass` 之外，插件会警告；尤其不要把自定义 decryptor 所在整包排除。
+- 生成 bridge 和自定义 implementation 不会递归进入字符串阶段；是否进入后续 CFG 取决于
+  `dexObfuscator` 过滤。若它们位于 `dexObfuscator.blackClass` 或 `dexObfuscator.obfClass` 之外，
+  插件会警告；尤其不要把自定义 decryptor 所在整包排除。
 - 启用字符串阶段时暂不支持 Gradle configuration cache。
 - application DEX 门禁默认扫描 `const-string`、static String 初值、annotation value 与已引用的
   非结构性 call-site 名称/参数；library JVM 门禁扫描 LDC/ConstantValue、annotation value 与
@@ -1174,9 +1163,8 @@ producer 重新生成、源码改变或 DEX 内容变化会触发正常混淆，
   application schema-10 报告。
 - 增量证据会在 `build/intermediates` 保存原文 SHA-256（不保存原文）。拥有本地构建目录的人可对
   短/常见字符串做字典枚举，因此该目录不得提交或分发，必要时执行 `clean`。
-- partial 增量构建会保守继承同配置历史 evidence 中的 hash；配置变化拒绝混用，完整 rerun 重置并集。
-  首次 partial 构建没有历史 evidence 时无法证明完整覆盖；默认 release 门禁会直接失败，需使用
-  `--rerun-tasks` 重新获得 `FULL` 证明。
+- partial 增量构建会保守继承同配置历史 evidence 中的 hash。默认严格 Release 会自动绕过这个不确定状态，
+  强制完整 ASM 遍历并核对 scoped inventory；不需要用户手动添加 `--rerun-tasks`。
 - dynamic-feature 尚未完成全链路插桩与 bundle/APKS 级 DEX 审计；默认严格明文门禁会在发现
   `dynamicFeatures` 时直接拒绝配置，不会把 base module 报告冒充整个 bundle 的证明。只有关闭严格
   门禁进入 report-only 时才允许继续，并发出警告、保持非 `FULL` 覆盖状态。
@@ -1195,15 +1183,21 @@ producer 重新生成、源码改变或 DEX 内容变化会触发正常混淆，
 DexCfgObfuscator/
 ├── build.gradle
 ├── build-release.sh
+├── build-central-bundle.sh
+├── LICENSE
+├── THIRD_PARTY_NOTICES.md
 ├── README.md
+├── .github/                     # CI、Dependabot、Issue/PR 模板
 ├── doc/
 │   ├── README_CN.md
-│   └── README_EN.md
-├── maven-repo/                 # 可直接消费的文件夹式 Maven 仓库
-├── release/                    # build-release.sh 生成，默认不提交
+│   ├── README_EN.md
+│   └── MAVEN_CENTRAL.md
+├── samples/android-consumer/   # 可复现 string/CFG/R8 宿主
+├── maven-repo/                 # 本地生成，忽略
+├── release/                    # 发布脚本生成，忽略
 └── src/
     ├── main/groovy/com/hunter/dexcfgobf/
-    │   ├── gradle/             # Gradle 插件、外层 DSL、StringEncryptionExtension
+    │   ├── gradle/             # Gradle 插件、模块化 DSL、StringEncryptionExtension
     │   ├── string/             # ASM visitor、cipher/key SPI、bridge 生成任务
     │   ├── CfgFlattener.java
     │   ├── ControlFlowFlattener.java
@@ -1213,18 +1207,26 @@ DexCfgObfuscator/
     └── test/java/com/hunter/dexcfgobf/
 ```
 
-## 15. 开源发布前检查
+## 15. 许可证、归属与发布检查
 
-仓库当前尚未包含 `LICENSE`。正式公开发布前建议由项目所有者完成：
+项目使用 [Apache License 2.0](../LICENSE)。`stringEncryption` 的设计和迁移兼容接口参考
+[MegatronKing/StringFog](https://github.com/MegatronKing/StringFog)，其中部分 ASM visitor/carrier
+实现基于上游改编并已做大幅修改；DEX 读写使用 dexlib2，JVM 字节码
+改写使用 ASM；完整依赖、版权和许可证告知见
+[THIRD_PARTY_NOTICES.md](../THIRD_PARTY_NOTICES.md)。这些上游项目不对本项目作背书。
 
-- 选择并加入 `LICENSE`。
-- 补充真实的 GitHub 仓库地址、Issue 和贡献流程。
-- 确认仓库历史、示例配置和发布产物不包含密钥、签名文件或业务私有数据。
-- 在干净 clone 中执行 `./build-release.sh`。
-- 校验发布 ZIP 的 SHA-256。
-- 在至少一个最小示例 App 和一个真实 App 上执行 debug/release、JADX、ART 和业务回归。
+每次正式发布前：
+
+- 确认工作树、历史、示例和发布物不包含密钥、签名私钥或业务私有数据。
+- 在干净 clone 中执行测试、`./build-release.sh` 和 Android consumer sample。
+- 校验发布 ZIP 的 SHA-256；Central 发布还要逐项检查 POM、sources、javadoc 和 PGP 签名。
+- 在真实 App 上执行 debug/release、JADX、ART、性能和关键业务回归。
+- 已公开版本不可覆盖；任何变更必须提升版本并创建对应 tag。
 
 ## 16. 贡献原则
+
+提交和安全报告流程分别见 [CONTRIBUTING.md](../CONTRIBUTING.md) 与
+[SECURITY.md](../SECURITY.md)。
 
 - 正确性和可回退性优先于混淆覆盖率。
 - 新变换必须附带语义测试、DEX 重新解析测试和边界用例。

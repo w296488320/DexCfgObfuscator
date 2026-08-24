@@ -1,3 +1,11 @@
+/*
+ * The bridge-generator shape is based in part on MegatronKing/StringFog.
+ * Copyright (C) 2017, Megatron King
+ * Modifications Copyright (C) 2026 DexCfgObfuscator contributors
+ *
+ * Licensed under the Apache License, Version 2.0. See the repository LICENSE file or
+ * https://www.apache.org/licenses/LICENSE-2.0 for the complete terms.
+ */
 package com.hunter.dexcfgobf.string;
 
 import org.gradle.api.DefaultTask;

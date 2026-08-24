@@ -155,27 +155,27 @@ public final class R8MappingResolverTest {
     @Test
     public void resolvesQualifiedMovedMembersUnderTheirContainingFinalOwner() throws Exception {
         Path mapping = writeMapping(
-                "com.google.android.gms.common.wrappers.InstantApps -> YouAreLoser.s01:",
+                "com.example.platform.RuntimeProbe -> obfuscated.a:",
                 "    int state -> a",
-                "    2:5:java.lang.String com.zhenxi.hunter.DexStringDecryptor.decrypt(java.lang.String,java.lang.String):21:21 -> q",
-                "    6:9:java.lang.String com.zhenxi.hunter.DexStringDecryptor.decrypt(java.lang.String,java.lang.String):22 -> q",
-                "    3:5:java.lang.String com.zhenxi.hunter.DexStringDecryptor.decrypt(byte[],byte[]):6:6 -> r",
+                "    2:5:java.lang.String com.example.crypto.RuntimeStringBridge.decrypt(java.lang.String,java.lang.String):21:21 -> q",
+                "    6:9:java.lang.String com.example.crypto.RuntimeStringBridge.decrypt(java.lang.String,java.lang.String):22 -> q",
+                "    3:5:java.lang.String com.example.crypto.RuntimeStringBridge.decrypt(byte[],byte[]):6:6 -> r",
                 "    void <init>(java.lang.String) -> <init>",
                 "    void work(int) -> s",
                 "    10:12:void work(java.lang.String):30:31 -> t",
-                "    byte[] com.zhenxi.hunter.DexStringDecryptor.cache -> u");
+                "    byte[] com.example.crypto.RuntimeStringBridge.cache -> u");
         try {
-            String decryptText = "com/zhenxi/hunter/DexStringDecryptor"
+            String decryptText = "com/example/crypto/RuntimeStringBridge"
                     + "->decrypt(Ljava/lang/String;Ljava/lang/String;)Ljava/lang/String;";
-            String decryptBytes = "com/zhenxi/hunter/DexStringDecryptor"
+            String decryptBytes = "com/example/crypto/RuntimeStringBridge"
                     + "->decrypt([B[B)Ljava/lang/String;";
-            String constructor = "com/google/android/gms/common/wrappers/InstantApps"
+            String constructor = "com/example/platform/RuntimeProbe"
                     + "-><init>(Ljava/lang/String;)V";
-            String overloadInt = "com/google/android/gms/common/wrappers/InstantApps->work(I)V";
-            String overloadString = "com/google/android/gms/common/wrappers/InstantApps"
+            String overloadInt = "com/example/platform/RuntimeProbe->work(I)V";
+            String overloadString = "com/example/platform/RuntimeProbe"
                     + "->work(Ljava/lang/String;)V";
-            String missing = "com/zhenxi/hunter/DexStringDecryptor->missing()V";
-            String field = "com/zhenxi/hunter/DexStringDecryptor->cache";
+            String missing = "com/example/crypto/RuntimeStringBridge->missing()V";
+            String field = "com/example/crypto/RuntimeStringBridge->cache";
 
             R8MappingResolver.ExactMemberResolution result =
                     R8MappingResolver.resolveExactMembers(mapping.toFile(),
@@ -194,18 +194,18 @@ public final class R8MappingResolverTest {
             assertFalse(result.isComplete());
 
             assertFinalMember(singleTarget(result.getResolvedMethods().get(decryptText)),
-                    "YouAreLoser/s01", "q");
+                    "obfuscated/a", "q");
             assertFinalMember(singleTarget(result.getResolvedMethods().get(decryptBytes)),
-                    "YouAreLoser/s01", "r");
+                    "obfuscated/a", "r");
             assertFinalMember(singleTarget(result.getResolvedMethods().get(constructor)),
-                    "YouAreLoser/s01", "<init>");
+                    "obfuscated/a", "<init>");
             assertFinalMember(singleTarget(result.getResolvedMethods().get(overloadInt)),
-                    "YouAreLoser/s01", "s");
+                    "obfuscated/a", "s");
             assertFinalMember(singleTarget(result.getResolvedMethods().get(overloadString)),
-                    "YouAreLoser/s01", "t");
+                    "obfuscated/a", "t");
             assertFinalMember(singleTarget(result.getResolvedFields().get(field)),
-                    "YouAreLoser/s01", "u");
-            assertEquals(Collections.singleton("YouAreLoser/s01"),
+                    "obfuscated/a", "u");
+            assertEquals(Collections.singleton("obfuscated/a"),
                     result.getResolvedFinalOwners());
 
             assertThrows(UnsupportedOperationException.class,
@@ -214,17 +214,17 @@ public final class R8MappingResolverTest {
                     () -> result.getResolvedFinalOwners().add("other/Owner"));
 
             ObfuscatorConfig config = new ObfuscatorConfig();
-            config.includePrefixes.add("com/zhenxi/hunter");
+            config.includePrefixes.add("com/example/crypto");
             assertEquals(1, R8MappingResolver.apply(mapping.toFile(), config));
-            assertEquals(Collections.singleton("YouAreLoser/s01"),
+            assertEquals(Collections.singleton("obfuscated/a"),
                     config.resolvedIncludeClasses);
             assertTrue(config.resolvedClassWideIncludeClasses.isEmpty());
             assertEquals(new java.util.LinkedHashSet<>(Arrays.asList(
-                    "YouAreLoser/s01->q", "YouAreLoser/s01->r")),
+                    "obfuscated/a->q", "obfuscated/a->r")),
                     config.resolvedIncludeMethods);
-            assertTrue(config.shouldProcessClass("LYouAreLoser/s01;"));
-            assertTrue(config.shouldProcessMethod("LYouAreLoser/s01;", "q"));
-            assertFalse(config.shouldProcessMethod("LYouAreLoser/s01;", "a"));
+            assertTrue(config.shouldProcessClass("Lobfuscated/a;"));
+            assertTrue(config.shouldProcessMethod("Lobfuscated/a;", "q"));
+            assertFalse(config.shouldProcessMethod("Lobfuscated/a;", "a"));
         } finally {
             Files.deleteIfExists(mapping);
         }
