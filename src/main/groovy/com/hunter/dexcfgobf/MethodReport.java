@@ -74,9 +74,66 @@ final class MethodReport {
         this.stateShareRegisters = outcome.stateShareRegisters;
     }
 
+    private MethodReport(String dex, String owner, String name, String descriptor,
+                         String mode, String reason, String template,
+                         int instructionsBefore, int instructionsAfter,
+                         int codeUnitsBefore, int codeUnitsAfter,
+                         int registersBefore, int registersAfter,
+                         boolean hasTry, boolean hasSwitch, boolean hasArrayPayload,
+                         boolean registerTypesSeparated, int addedRegisters,
+                         int switchesPadded, int switchCasesBefore, int switchCasesAfter,
+                         int fakeSwitchCases, int symbolSwitchCases, int dispatcherRegions,
+                         int reachableAliasCases, int stateShareRegisters) {
+        this.dex = dex;
+        this.owner = owner;
+        this.name = name;
+        this.descriptor = descriptor;
+        this.mode = mode;
+        this.reason = reason;
+        this.template = template;
+        this.instructionsBefore = instructionsBefore;
+        this.instructionsAfter = instructionsAfter;
+        this.codeUnitsBefore = codeUnitsBefore;
+        this.codeUnitsAfter = codeUnitsAfter;
+        this.registersBefore = registersBefore;
+        this.registersAfter = registersAfter;
+        this.hasTry = hasTry;
+        this.hasSwitch = hasSwitch;
+        this.hasArrayPayload = hasArrayPayload;
+        this.registerTypesSeparated = registerTypesSeparated;
+        this.addedRegisters = addedRegisters;
+        this.switchesPadded = switchesPadded;
+        this.switchCasesBefore = switchCasesBefore;
+        this.switchCasesAfter = switchCasesAfter;
+        this.fakeSwitchCases = fakeSwitchCases;
+        this.symbolSwitchCases = symbolSwitchCases;
+        this.dispatcherRegions = dispatcherRegions;
+        this.reachableAliasCases = reachableAliasCases;
+        this.stateShareRegisters = stateShareRegisters;
+    }
+
     static MethodReport of(String dex, Method method, TransformationOutcome outcome,
                            MethodImplementation before, MethodImplementation after) {
         return new MethodReport(dex, method, outcome, before, after);
+    }
+
+    /** Recreates an immutable report from a previously validated build-evidence record. */
+    static MethodReport restore(String dex, String owner, String name, String descriptor,
+                                String mode, String reason, String template,
+                                int instructionsBefore, int instructionsAfter,
+                                int codeUnitsBefore, int codeUnitsAfter,
+                                int registersBefore, int registersAfter,
+                                boolean hasTry, boolean hasSwitch, boolean hasArrayPayload,
+                                boolean registerTypesSeparated, int addedRegisters,
+                                int switchesPadded, int switchCasesBefore, int switchCasesAfter,
+                                int fakeSwitchCases, int symbolSwitchCases, int dispatcherRegions,
+                                int reachableAliasCases, int stateShareRegisters) {
+        return new MethodReport(dex, owner, name, descriptor, mode, reason, template,
+                instructionsBefore, instructionsAfter, codeUnitsBefore, codeUnitsAfter,
+                registersBefore, registersAfter, hasTry, hasSwitch, hasArrayPayload,
+                registerTypesSeparated, addedRegisters, switchesPadded, switchCasesBefore,
+                switchCasesAfter, fakeSwitchCases, symbolSwitchCases, dispatcherRegions,
+                reachableAliasCases, stateShareRegisters);
     }
 
     private static int count(MethodImplementation implementation) {

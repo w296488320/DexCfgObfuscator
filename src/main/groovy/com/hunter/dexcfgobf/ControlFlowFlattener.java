@@ -260,6 +260,12 @@ final class ControlFlowFlattener {
 
         MethodImplementationBuilder out = new MethodImplementationBuilder(newRc);
 
+        // 与 reorder 路径共用的低碰撞 V1 幂等标记。即使 state/evidence sidecar 被误删，
+        // 下一次也能识别已经变换的方法，避免对 flattened CFG 再次套娃。
+        Label transformedEntry = out.getLabel("cfgTransformedEntry");
+        ObfuscationMarker.emitV1(out, transformedEntry);
+        out.addLabel("cfgTransformedEntry");
+
         // 入口：先把所有非参数寄存器预初始化为 0，再进 dispatcher。
         // 原因：平坦化后每个块都从 dispatcher 可达，破坏了“定义支配使用”，ART 校验器会因
         // “寄存器在某条到达路径上未定义”而 VerifyError。预置为 0 使每个寄存器入口即“已定义”，

@@ -7,7 +7,7 @@ plugins {
 // 私有插件坐标。不走任何云端仓库；发布物落在本仓库内的 maven-repo/ 文件夹，
 // 该文件夹会随 git 一起提交，别的项目 clone/pull 到本地后用相对路径即可引用。
 group = 'com.hunter'
-version = '0.0.7'
+version = '0.0.14'
 
 java {
     sourceCompatibility = JavaVersion.VERSION_17
@@ -23,6 +23,10 @@ repositories {
 dependencies {
     // 混淆算法核心：直接操作 DEX 指令，规避 dex2jar IR 往返导致的 65540 崩溃。
     implementation 'com.android.tools.smali:smali-dexlib2:3.0.9'
+    // 字符串改写先缓冲整个方法，再用 CodeSizeEvaluator 对 JVM Code
+    // attribute 的 65535-byte 上限做 fail-closed 预算。
+    implementation 'org.ow2.asm:asm-tree:9.9'
+    implementation 'org.ow2.asm:asm-commons:9.9'
 
     // 插件在 apply 时需要引用 AGP 的任务/变体类型来做任务编排；
     // compileOnly：不把 AGP 打进插件，运行期由宿主工程自带的 AGP 提供。
@@ -30,6 +34,10 @@ dependencies {
 
     testImplementation 'junit:junit:4.13.2'
     testImplementation 'com.android.tools.smali:smali-dexlib2:3.0.9'
+    testImplementation 'org.ow2.asm:asm:9.9'
+    testImplementation 'org.ow2.asm:asm-tree:9.9'
+    // Executes the same embedded R8 generation used by AGP 9.3.1 in rule-contract tests.
+    testRuntimeOnly 'com.android.tools.build:builder:9.3.1'
 }
 
 gradlePlugin {
@@ -38,9 +46,9 @@ gradlePlugin {
             // 宿主工程用 id 'com.hunter.dexcfgobf' 引用本插件。
             id = 'com.hunter.dexcfgobf'
             implementationClass = 'com.hunter.dexcfgobf.gradle.DexCfgObfuscatorPlugin'
-            displayName = 'DEX Control-Flow Obfuscator'
-            description = 'Basic-block reordering DEX control-flow obfuscation for Android (AGP), ' +
-                    'runs after R8 and preserves runtime semantics.'
+            displayName = 'DEX String and Control-Flow Obfuscator'
+            description = 'Pre-D8/R8 string protection for Android applications/libraries; ' +
+                    'post-D8/R8 control-flow obfuscation for applications.'
         }
     }
 }
@@ -52,7 +60,9 @@ publishing {
     repositories {
         maven {
             name = "LocalPluginRepo"
-            url = uri("${rootDir}/maven-repo")
+            // 默认发布到随仓库分发的目录；集成测试可用独立临时仓库，避免提前占用正式版本。
+            url = uri(providers.gradleProperty('dexCfgObfuscatorPublishRepo')
+                    .getOrElse("${rootDir}/maven-repo"))
         }
     }
 }

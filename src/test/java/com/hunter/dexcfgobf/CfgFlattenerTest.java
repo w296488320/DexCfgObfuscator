@@ -246,6 +246,22 @@ public class CfgFlattenerTest {
         assertEquals(1, secondStats.methodsSkippedAlreadyObfuscated);
     }
 
+    @Test
+    public void strongFlatteningIsIdempotent() {
+        ObfuscatorStats firstStats = new ObfuscatorStats();
+        MethodImplementation once = newFlattener(firstStats)
+                .flatten(fakeMethod(), buildSample());
+        assertNotNull("the first pass should strongly flatten the method", once);
+        assertEquals(1, firstStats.methodsFlattened);
+
+        ObfuscatorStats secondStats = new ObfuscatorStats();
+        MethodImplementation twice = newFlattener(secondStats)
+                .flatten(fakeMethod(), once);
+        assertEquals("an already flattened body must not be flattened again", null, twice);
+        assertEquals(1, secondStats.methodsSkippedAlreadyObfuscated);
+        assertEquals(0, secondStats.methodsFlattened);
+    }
+
     /**
      * 复现启动崩溃的根因：同一局部寄存器在互不相交的生命周期里先后承载 byte[] 和 String。
      * 原 CFG 合法，但 dispatcher 会给各块增加汇合边，使 ART 报 String/byte[] VerifyError。
@@ -291,18 +307,32 @@ public class CfgFlattenerTest {
                     "com.example.Secret -> YouAreLoser.a:",
                     "    1:1:void run():1:1 -> a",
                     "third.party.Library -> YouAreLoser.b:",
+                    "com.examples.Adjacent -> YouAreLoser.c:",
                     "com.example.Kept -> com.example.Kept:",
-                    "com.example.hunter.NativeEngine -> com.example.hunter.NativeEngine:"
+                    "com.example.hunter.NativeEngine -> com.example.hunter.NativeEngine:",
+                    "com.example.hunter.NativeEngineHelper -> YouAreLoser.d:"
             ), StandardCharsets.UTF_8);
             ObfuscatorConfig cfg = new ObfuscatorConfig();
             cfg.includePrefixes.add("com/example");
             cfg.excludePrefixes.add("com/example/hunter/NativeEngine");
 
-            assertEquals(2, R8MappingResolver.apply(mapping.toFile(), cfg));
+            assertEquals(3, R8MappingResolver.apply(mapping.toFile(), cfg));
             assertTrue(cfg.shouldProcessClass("LYouAreLoser/a;"));
             assertTrue(cfg.shouldProcessClass("Lcom/example/Kept;"));
             assertFalse(cfg.shouldProcessClass("LYouAreLoser/b;"));
+            assertFalse(cfg.shouldProcessClass("LYouAreLoser/c;"));
             assertFalse(cfg.shouldProcessClass("Lcom/example/hunter/NativeEngine;"));
+            assertTrue(cfg.shouldProcessClass("LYouAreLoser/d;"));
+
+            ObfuscatorConfig direct = new ObfuscatorConfig();
+            direct.includePrefixes.add("com/example/");
+            direct.excludePrefixes.add("com/example/hunter/NativeEngine");
+            assertTrue(direct.shouldProcessClass("Lcom/example/Feature;"));
+            assertFalse(direct.shouldProcessClass("Lcom/examples/Adjacent;"));
+            assertFalse(direct.shouldProcessClass(
+                    "Lcom/example/hunter/NativeEngine$Inner;"));
+            assertTrue(direct.shouldProcessClass(
+                    "Lcom/example/hunter/NativeEngineHelper;"));
         } finally {
             Files.deleteIfExists(mapping);
         }

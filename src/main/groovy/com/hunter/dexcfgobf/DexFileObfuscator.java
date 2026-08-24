@@ -55,6 +55,9 @@ final class DexFileObfuscator {
         for (ClassDef classDef : dex.getClasses()) {
             stats.classesScanned++;
             if (!config.shouldProcessClass(classDef.getType())) {
+                if (config.refuseAlreadyObfuscatedInput) {
+                    stats.methodsSkippedAlreadyObfuscated += countObfuscationMarkers(classDef);
+                }
                 newClasses.add(classDef);
                 continue;
             }
@@ -64,18 +67,38 @@ final class DexFileObfuscator {
             boolean classChanged = false;
 
             for (Method method : classDef.getDirectMethods()) {
+                if (!config.shouldProcessMethod(classDef.getType(), method.getName())) {
+                    if (method.getImplementation() != null) stats.methodsSkippedNotIncluded++;
+                    newDirect.add(method);
+                    continue;
+                }
+                boolean required = isRequiredResolvedMethod(config, method);
+                if (required && method.getImplementation() != null) {
+                    stats.cfgRequiredMethodsScanned++;
+                }
                 Method m = maybeObfuscate(dexFile.getName(), method, flattener,
                         typeSeparator, config, stats);
                 if (m != method) {
                     classChanged = true;
+                    if (required) stats.cfgRequiredMethodsObfuscated++;
                 }
                 newDirect.add(m);
             }
             for (Method method : classDef.getVirtualMethods()) {
+                if (!config.shouldProcessMethod(classDef.getType(), method.getName())) {
+                    if (method.getImplementation() != null) stats.methodsSkippedNotIncluded++;
+                    newVirtual.add(method);
+                    continue;
+                }
+                boolean required = isRequiredResolvedMethod(config, method);
+                if (required && method.getImplementation() != null) {
+                    stats.cfgRequiredMethodsScanned++;
+                }
                 Method m = maybeObfuscate(dexFile.getName(), method, flattener,
                         typeSeparator, config, stats);
                 if (m != method) {
                     classChanged = true;
+                    if (required) stats.cfgRequiredMethodsObfuscated++;
                 }
                 newVirtual.add(m);
             }
@@ -127,6 +150,24 @@ final class DexFileObfuscator {
             tmp.delete();
         }
         stats.outputDexBytes += dexFile.length();
+    }
+
+    /** Marker refusal must be artifact-wide, independent of the current include/exclude scope. */
+    private static int countObfuscationMarkers(ClassDef classDef) {
+        int count = 0;
+        for (Method method : classDef.getDirectMethods()) {
+            if (ObfuscationMarker.hasV1(method.getImplementation())) count++;
+        }
+        for (Method method : classDef.getVirtualMethods()) {
+            if (ObfuscationMarker.hasV1(method.getImplementation())) count++;
+        }
+        return count;
+    }
+
+    private static boolean isRequiredResolvedMethod(ObfuscatorConfig config, Method method) {
+        return config.requiredResolvedIncludeMethods.contains(
+                ObfuscatorConfig.normalizeClassName(method.getDefiningClass())
+                        + "->" + method.getName());
     }
 
     private static Method maybeObfuscate(String dexName,

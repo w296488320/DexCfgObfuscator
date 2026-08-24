@@ -74,8 +74,12 @@ public final class DexControlFlowObfuscator {
                 pairs.add(new Path[]{source, staged});
             }
 
-            enforceBudgets(stats);
-
+            if (config.refuseAlreadyObfuscatedInput
+                    && stats.methodsSkippedAlreadyObfuscated > 0) {
+                throw new IllegalStateException("input contains "
+                        + stats.methodsSkippedAlreadyObfuscated
+                        + " already-obfuscated method marker(s) without matching build evidence");
+            }
             // 只提交内容实际变化的 DEX；已平坦化方法含 switch，会保持幂等、不反复放大。
             List<Path[]> changed = new ArrayList<>();
             for (Path[] pair : pairs) {
@@ -112,21 +116,6 @@ public final class DexControlFlowObfuscator {
         }
         logger.info("obfuscate done: " + stats);
         return stats;
-    }
-
-    private void enforceBudgets(ObfuscatorStats stats) {
-        if (stats.methodsObfuscated < config.minObfuscatedMethods) {
-            throw new IllegalStateException("obfuscated method count " + stats.methodsObfuscated
-                    + " is below minObfuscatedMethods=" + config.minObfuscatedMethods);
-        }
-        if (stats.obfuscatedRatio() + 1.0e-12d < config.minObfuscatedRatio) {
-            throw new IllegalStateException("obfuscated ratio " + stats.obfuscatedRatio()
-                    + " is below minObfuscatedRatio=" + config.minObfuscatedRatio);
-        }
-        if (stats.sizeIncreasePercent() > config.maxSizeIncreasePercent) {
-            throw new IllegalStateException("DEX size increase " + stats.sizeIncreasePercent()
-                    + "% exceeds maxSizeIncreasePercent=" + config.maxSizeIncreasePercent);
-        }
     }
 
     private static void replaceFile(Path staged, Path target) throws IOException {

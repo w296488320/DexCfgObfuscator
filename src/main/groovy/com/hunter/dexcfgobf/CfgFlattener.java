@@ -100,7 +100,7 @@ final class CfgFlattener {
         resetSwitchPaddingStats();
         // 基本块重排会写入一个零寄存器、不可达的显式标记。Gradle 在 producer task
         // up-to-date 时可能再次执行本 task；没有这个判断会对同一份 dex 反复重排。
-        if (hasReorderMarker(impl)) {
+        if (ObfuscationMarker.hasV1(impl)) {
             return finish(null, TransformationOutcome.skipped(
                     TransformationOutcome.Reason.ALREADY_OBFUSCATED));
         }
@@ -389,13 +389,9 @@ final class CfgFlattener {
 
         MethodImplementationBuilder out = new MethodImplementationBuilder(src.getRegisterCount());
 
-        // 入口：跳到“原入口块”（原始 index 0 处）所在的新位置。
-        // 紧随其后的不可达 `nop; goto same-entry` 是幂等标记：不读写寄存器、不进入
-        // try 区间、也不改变任何可达控制流；下次执行插件时据此保持方法原样。
+        // 入口前写入共享 V1 幂等标记；不读写寄存器、不进入 try 区间，也不改变可达语义。
         Label originalEntry = out.getLabel(blockLabel(0));
-        out.addInstruction(new BuilderInstruction10t(Opcode.GOTO, originalEntry));
-        out.addInstruction(new BuilderInstruction10x(Opcode.NOP));
-        out.addInstruction(new BuilderInstruction10t(Opcode.GOTO, originalEntry));
+        ObfuscationMarker.emitV1(out, originalEntry);
 
         for (int oi = 0; oi < bc; oi++) {
             int[] blk = blocks.get(order[oi]);
@@ -1102,24 +1098,6 @@ final class CfgFlattener {
     private static boolean hasTryBlocks(MethodImplementation impl) {
         List<? extends TryBlock<? extends ExceptionHandler>> tries = impl.getTryBlocks();
         return tries != null && !tries.isEmpty();
-    }
-
-    /**
-     * 识别 {@link #reorderBasicBlocks(Method, MethodImplementation, int)} 写入的幂等标记：
-     * 方法体前三条为 `goto X; nop; goto X`。原生代码即使偶然以 goto 开头，也只有
-     * 同时满足两个跳转目标完全相同才会命中；误命中最多是少做混淆，不会改写业务语义。
-     */
-    private static boolean hasReorderMarker(MethodImplementation impl) {
-        MutableMethodImplementation work = new MutableMethodImplementation(impl);
-        List<BuilderInstruction> insns = work.getInstructions();
-        if (insns.size() < 3 || !isGoto(insns.get(0).getOpcode())
-                || insns.get(1).getOpcode() != Opcode.NOP
-                || !isGoto(insns.get(2).getOpcode())) {
-            return false;
-        }
-        Integer firstTarget = builderBranchTargetIndex(insns.get(0));
-        Integer secondTarget = builderBranchTargetIndex(insns.get(2));
-        return firstTarget != null && firstTarget.equals(secondTarget) && firstTarget >= 3;
     }
 
     private long stableSeed(Method method, MethodImplementation impl, int n, int blocks) {

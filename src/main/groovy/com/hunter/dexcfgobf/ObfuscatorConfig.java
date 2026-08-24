@@ -64,8 +64,13 @@ public final class ObfuscatorConfig {
     /** 是否按方法种子选择不同 dispatcher/编码模板。 */
     public boolean enableMultiTemplate = true;
 
+    /** Gradle adapter 没有匹配 evidence 时拒绝接收带幂等 marker 的旧产物，避免重签配置。 */
+    public boolean refuseAlreadyObfuscatedInput;
+
     /** 覆盖率与体积预算；0 表示不设最低覆盖门槛。 */
     public int minObfuscatedMethods;
+    /** 强平坦化方法数下限；reorder 不计入，避免较弱变换填满总覆盖门槛。 */
+    public int minFlattenedMethods;
     public double minObfuscatedRatio;
     public double maxSizeIncreasePercent = 100.0d;
 
@@ -78,15 +83,48 @@ public final class ObfuscatorConfig {
      * -repackageclasses 把自有类改名后漏混淆，也避免直接放开重打包目录误伤第三方类。
      */
     public final Set<String> resolvedIncludeClasses = new LinkedHashSet<>();
+    /** Final owners whose class headers themselves came only from configured business classes. */
+    public final Set<String> resolvedClassWideIncludeClasses = new LinkedHashSet<>();
+    /**
+     * Exact final owner+method-name sites moved/inlined from configured business methods. When an
+     * owner is not class-wide, only these names (all residual overloads) may be transformed.
+     */
+    public final Set<String> resolvedIncludeMethods = new LinkedHashSet<>();
+    /** Final generated-decryptor method names that must all be found and transformed. */
+    public final Set<String> requiredResolvedIncludeMethods = new LinkedHashSet<>();
     public boolean requireResolvedIncludeClasses;
 
     public boolean shouldProcessClass(String classDescriptor) {
         // classDescriptor 形如 "Lcom/example/hunter/Foo;"
         String normalized = normalizeClassName(classDescriptor);
+        if (hasRequiredMethodOwner(normalized)) return true;
         if (requireResolvedIncludeClasses) {
             return resolvedIncludeClasses.contains(normalized);
         }
         return matchesConfiguredPrefixes(normalized);
+    }
+
+    public boolean shouldProcessMethod(String classDescriptor, String methodName) {
+        String owner = normalizeClassName(classDescriptor);
+        if (methodName != null
+                && requiredResolvedIncludeMethods.contains(owner + "->" + methodName)) {
+            return true;
+        }
+        if (!requireResolvedIncludeClasses) {
+            return true;
+        }
+        if (resolvedClassWideIncludeClasses.contains(owner)) {
+            return true;
+        }
+        return methodName != null && resolvedIncludeMethods.contains(owner + "->" + methodName);
+    }
+
+    private boolean hasRequiredMethodOwner(String owner) {
+        String prefix = owner + "->";
+        for (String required : requiredResolvedIncludeMethods) {
+            if (required.startsWith(prefix)) return true;
+        }
+        return false;
     }
 
     /** R8 mapping 左侧原始类名是否属于配置的业务范围。 */
@@ -96,16 +134,28 @@ public final class ObfuscatorConfig {
 
     private boolean matchesConfiguredPrefixes(String normalized) {
         for (String ex : excludePrefixes) {
-            if (normalized.startsWith(ex)) {
+            if (matchesClassOrPackageBoundary(normalized, ex)) {
                 return false;
             }
         }
         for (String in : includePrefixes) {
-            if (normalized.startsWith(in)) {
+            if (matchesClassOrPackageBoundary(normalized, in)) {
                 return true;
             }
         }
         return false;
+    }
+
+    private static boolean matchesClassOrPackageBoundary(String normalized, String rawPrefix) {
+        String prefix = normalizeClassName(rawPrefix);
+        while (prefix.endsWith("/")) {
+            prefix = prefix.substring(0, prefix.length() - 1);
+        }
+        if (prefix.isEmpty() || normalized.isEmpty()) return false;
+        if (normalized.equals(prefix)) return true;
+        if (!normalized.startsWith(prefix) || normalized.length() <= prefix.length()) return false;
+        char boundary = normalized.charAt(prefix.length());
+        return boundary == '/' || boundary == '$';
     }
 
     /** 点分/描述符/斜杠类名统一成不带 L; 的斜杠形式。 */
