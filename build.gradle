@@ -1,15 +1,17 @@
 import org.gradle.api.publish.maven.MavenPublication
 import org.gradle.api.publish.maven.tasks.PublishToMavenRepository
+import org.gradle.api.tasks.bundling.AbstractArchiveTask
 
 plugins {
     id 'groovy'
     id 'java-gradle-plugin'
+    id 'com.gradle.plugin-publish' version '2.1.1'
     id 'maven-publish'
-    id 'signing'
 }
 
-// Public coordinates use the GitHub-owned Maven Central namespace. Java package names intentionally
-// stay under com.hunter: changing Maven coordinates does not require moving implementation classes.
+// Public coordinates use the GitHub-owned namespace consistently across Pages, Plugin Portal, and
+// Maven Central. Java package names intentionally stay under com.hunter: changing Maven coordinates
+// does not require moving implementation classes.
 def pomGroupId = providers.gradleProperty('POM_GROUP_ID')
         .getOrElse('io.github.w296488320')
 def pomArtifactId = providers.gradleProperty('POM_ARTIFACT_ID')
@@ -18,6 +20,9 @@ def pomVersion = providers.gradleProperty('POM_VERSION')
         .getOrElse('0.1.0')
 def publicPluginId = providers.gradleProperty('POM_PLUGIN_ID')
         .getOrElse('io.github.w296488320.dexcfgobf')
+def projectUrl = 'https://github.com/w296488320/DexCfgObfuscator'
+def projectDescription = 'Gradle plugin providing pre-D8/R8 string protection and ' +
+        'post-D8/R8 DEX control-flow obfuscation for Android.'
 
 group = pomGroupId
 version = pomVersion
@@ -56,6 +61,8 @@ dependencies {
 }
 
 gradlePlugin {
+    website = projectUrl
+    vcsUrl = projectUrl
     plugins {
         dexCfgObfuscator {
             id = publicPluginId
@@ -63,6 +70,15 @@ gradlePlugin {
             displayName = 'DEX String and Control-Flow Obfuscator'
             description = 'Pre-D8/R8 string protection for Android applications/libraries; ' +
                     'post-D8/R8 control-flow obfuscation for applications.'
+            tags.set(['android', 'dex', 'obfuscation', 'string-encryption', 'security'])
+            // String-encryption configuration may contain caller-supplied cipher/key objects that
+            // intentionally remain build-process state. Advertise this limitation accurately on
+            // the Plugin Portal instead of claiming configuration-cache compatibility.
+            compatibility {
+                features {
+                    configurationCache = false
+                }
+            }
         }
     }
 }
@@ -75,9 +91,15 @@ tasks.named('javadoc') {
     options.encoding = 'UTF-8'
     options.charSet = 'UTF-8'
     options.addBooleanOption('Xdoclint:none', true)
+    // Keep the published javadoc JAR byte-reproducible across an exact-tag retry.
+    options.addBooleanOption('notimestamp', true)
 }
 
 def legalFiles = ['LICENSE', 'NOTICE', 'THIRD_PARTY_NOTICES.md']
+tasks.withType(AbstractArchiveTask).configureEach {
+    preserveFileTimestamps = false
+    reproducibleFileOrder = true
+}
 tasks.withType(Jar).configureEach {
     legalFiles.each { legalName ->
         def legalFile = rootProject.file(legalName)
@@ -98,10 +120,6 @@ tasks.named('jar') {
         )
     }
 }
-
-def projectUrl = 'https://github.com/w296488320/DexCfgObfuscator'
-def projectDescription = 'Gradle plugin providing pre-D8/R8 string protection and ' +
-        'post-D8/R8 DEX control-flow obfuscation for Android.'
 
 def centralBundleRepo = providers.gradleProperty('centralBundleRepo')
 def centralPublishingEnabled = providers.gradleProperty('centralPublishing')
@@ -161,7 +179,7 @@ publishing {
                 connection.set('scm:git:https://github.com/w296488320/DexCfgObfuscator.git')
                 developerConnection.set('scm:git:ssh://git@github.com/w296488320/DexCfgObfuscator.git')
                 url.set("${projectUrl}/tree/main")
-                tag.set('HEAD')
+                tag.set("v${pomVersion}")
             }
             issueManagement {
                 system.set('GitHub Issues')
@@ -224,6 +242,11 @@ if (centralSigningRequested) {
                 'MAVEN_GPG_PASSWORD (or private ~/.gradle/gradle.properties values).')
     }
 
+    // Applying signing unconditionally makes Plugin Portal validation create signing tasks even
+    // though the Portal neither needs nor accepts Central's GPG credentials. Keep signing scoped
+    // to Central output: Portal-only validate/publish stays credential-light, while every Central
+    // publication remains signed and fails closed above when no key is configured.
+    apply plugin: 'signing'
     signing {
         required = true
         if (signingKeyId.isPresent()) {

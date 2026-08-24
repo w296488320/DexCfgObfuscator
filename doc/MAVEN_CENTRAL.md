@@ -1,6 +1,19 @@
-# 发布到 Maven Central
+# 在线发布：GitHub Pages、Gradle Plugin Portal 与 Maven Central
 
-本文档只描述发布者流程。普通使用者不需要 Sonatype 账号、Token 或 GPG 私钥。
+本文档只描述发布者流程。普通使用者不需要 GitHub、Gradle 或 Sonatype 发布账号，也不需要 Token
+或 GPG 私钥。
+
+## 0. 渠道选择
+
+- **GitHub Pages Maven**：当前首选公开入口。仓库确认可公开并完成一次性 Pages 设置后，推送精确
+  匹配项目版本的 `v<version>` tag，自动发布完整 Maven 仓库，并创建同版本 GitHub Release 离线
+  附件。使用者匿名读取。
+- **Gradle Plugin Portal**：最符合 Gradle plugins DSL 使用习惯，但需要单独注册 Gradle 账号和 API key，
+  首版可能进入人工审核。
+- **Maven Central**：标准 Maven 镜像，需 namespace、PGP 与独立的 Portal 发布流程。
+
+三个渠道共享 canonical plugin ID `io.github.w296488320.dexcfgobf`，但发布状态互相独立。GitHub
+Pages 上线不应伪装成 Portal/Central 已通过审核。
 
 项目的公开坐标是：
 
@@ -162,13 +175,37 @@ unset MAVEN_CENTRAL_USERNAME MAVEN_CENTRAL_PASSWORD \
 - <https://central.sonatype.org/publish/generate-portal-token/>
 - <https://central.sonatype.org/publish/publish-portal-ossrh-staging-api/>
 
-## Maven Central 与 Gradle Plugin Portal 的区别
+## GitHub Pages、Maven Central 与 Gradle Plugin Portal 的区别
+
+- **GitHub Pages Maven** 托管本项目生成的完整静态 Maven layout。workflow 只接受指向 `main` 历史、
+  且名称精确等于 `v<project.version>` 的 tag；同版本只能字节完全一致地重试，不能覆盖。正式 tag 前
+  需先确认历史中没有凭据/私有数据、把仓库设为 **Public**，再在 Settings → Pages 将 Source 设为
+  **GitHub Actions**。普通 `GITHUB_TOKEN` 不能代替维护者执行这两个一次性权限操作。
 
 - **Maven Central** 托管普通 Maven publication。本项目同时上传实现组件和 Gradle plugin marker 后，宿主可在
   `pluginManagement.repositories` 中添加 `mavenCentral()`，再通过 plugins DSL 使用插件。
 - **Gradle Plugin Portal** 是单独的插件目录和审核/发布系统。发布到 Maven Central 不会自动出现在 Plugin
   Portal；如需 `gradlePluginPortal()` 单独解析，还需要 Gradle 账号、Portal API key 和
   `com.gradle.plugin-publish` 发布流程。
-- 两边可以使用同一个 canonical plugin ID `io.github.w296488320.dexcfgobf`，但版本发布是两个独立动作。
+- 三边可以使用同一个 canonical plugin ID `io.github.w296488320.dexcfgobf`，但版本发布是三个独立动作。
 
-Maven Central 首次发布已经足够让公开用户稳定接入，因此建议先完成 Central，再单独决定是否上 Plugin Portal。
+Plugin Portal 本地任务图和 metadata 可先检查：
+
+```bash
+./gradlew clean test validatePlugins
+./gradlew publishPlugins --validate-only --dry-run
+```
+
+真实 Portal 校验/上传需要把 `GRADLE_PUBLISH_KEY`、`GRADLE_PUBLISH_SECRET` 放在私有环境变量或
+用户级 `~/.gradle/gradle.properties`，再执行：
+
+```bash
+./gradlew publishPlugins --validate-only
+./gradlew publishPlugins
+```
+
+不得把这两个值写入仓库、命令行参数、构建日志或 Release 附件。`--validate-only` 仍会连接 Portal，
+因此没有 API 凭据时只能做前述 `--dry-run` 和本地 `validatePlugins`。
+
+实际顺序建议先发布并验证 GitHub Pages，让使用者立即可接入；再分别完成 Plugin Portal 与 Maven
+Central 的账号审核。任何渠道已发布的版本都不应覆盖，修改后必须提升版本并创建新 tag。

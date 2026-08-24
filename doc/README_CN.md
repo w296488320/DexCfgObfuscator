@@ -49,12 +49,12 @@ string-only、CFG-only、双开、R8 开/关 APK 构建；library 的 `PROJECT` 
 自定义算法、质量门禁以及 library 的完整说明仍可在后面的“获取插件”“宿主工程接入”和
 “DSL 配置”章节中查阅。
 
-### 第 1 步：使用 Maven Central 在线仓库
+### 第 1 步：使用公开在线 Maven 仓库
 
-本章默认按 Maven Central 在线接入。确认 `0.1.0` 已在 Central 同步可查后，普通项目不需要下载本仓库、
-复制 JAR 或自行构建插件。只有首个 Central 版本发布前，或需要离线/内部分发时，才
-下载 GitHub Release 中的 `dex-cfg-obfuscator-0.1.0-maven-repo.zip`，解压后使用其中完整的
-`maven-repo/`，不要只复制实现 JAR。
+正式 tag 会把完整 Maven 仓库发布到 GitHub Pages；普通项目无需账号、无需下载本仓库，也无需自行
+构建插件。Gradle Plugin Portal 与 Maven Central 上线后仍使用同一个 plugin ID，可作为标准镜像。
+只有离线/内部分发时，才下载 GitHub Release 中的
+`dex-cfg-obfuscator-0.1.0-maven-repo.zip`，解压后使用其中完整的 `maven-repo/`，不要只复制实现 JAR。
 
 ### 第 2 步：在项目级 `settings.gradle` 注册插件仓库
 
@@ -64,9 +64,16 @@ Gradle plugin marker。项目已有该代码块时合并仓库声明，不要创
 ```groovy
 pluginManagement {
     repositories {
+        maven {
+            name = 'DexCfgObfuscatorGitHubPages'
+            url = uri('https://w296488320.github.io/DexCfgObfuscator/maven-repo')
+            content {
+                includeGroupByRegex 'io\\.github\\.w296488320(\\..*)?'
+            }
+        }
         google()
-        mavenCentral()
         gradlePluginPortal()
+        mavenCentral()
     }
 }
 ```
@@ -411,13 +418,19 @@ outputs 执行常量池门禁。最终 DEX 的 CFG 防护和全局明文证明�
 
 ## 4. 获取插件
 
-### 4.1 Maven Central（推荐）
+### 4.1 GitHub Pages Maven（当前公开入口）
 
-这是普通使用者的默认接入方式。确认 `0.1.0` 已在 Central 同步可查后，在
-`pluginManagement.repositories` 中保留 `mavenCentral()`，再使用
-`io.github.w296488320.dexcfgobf` 即可。使用者不需要 Sonatype 账号、GPG 或发布 Token。
+正式 `v<version>` tag 会把实现组件和 Gradle plugin marker 合并到持久化的 `gh-pages` Maven
+仓库，并拒绝覆盖已经存在的版本。使用者只需在 `pluginManagement.repositories` 中增加
+`https://w296488320.github.io/DexCfgObfuscator/maven-repo`，无需 GitHub 账号或 Token。
 
-### 4.2 GitHub Release ZIP（离线/内部使用）
+### 4.2 Gradle Plugin Portal 与 Maven Central（标准镜像）
+
+两个渠道都使用 `io.github.w296488320.dexcfgobf`。Plugin Portal 可直接由
+`gradlePluginPortal()` 解析；Central 可由 `mavenCentral()` 解析。首版审核完成前使用 GitHub Pages，
+审核通过后无需修改模块插件声明。普通使用者不需要发布账号、GPG 或发布 Token。
+
+### 4.3 GitHub Release ZIP（离线/内部使用）
 
 发布包不是单独复制的 JAR，而是包含实现 JAR、POM、Gradle plugin marker 和校验文件的文件夹式
 Maven 仓库，并且只包含当前版本：
@@ -430,7 +443,7 @@ dex-cfg-obfuscator-0.1.0-maven-repo.zip
 
 解压到稳定目录，然后在宿主的 `settings.gradle` 指向 `maven-repo/`。
 
-### 4.3 维护者/开发验证：从源码发布到本地目录
+### 4.4 维护者/开发验证：从源码发布到本地目录
 
 本节不是普通使用者的接入步骤，仅用于插件维护、源码开发验证或生成隔离的本地仓库。
 
@@ -449,9 +462,16 @@ cd DexCfgObfuscator
 ```groovy
 pluginManagement {
     repositories {
+        maven {
+            name = 'DexCfgObfuscatorGitHubPages'
+            url = uri('https://w296488320.github.io/DexCfgObfuscator/maven-repo')
+            content {
+                includeGroupByRegex 'io\\.github\\.w296488320(\\..*)?'
+            }
+        }
         google()
-        mavenCentral()
         gradlePluginPortal()
+        mavenCentral()
     }
 }
 ```
@@ -463,9 +483,16 @@ pluginManagement {
 ```kotlin
 pluginManagement {
     repositories {
+        maven {
+            name = "DexCfgObfuscatorGitHubPages"
+            url = uri("https://w296488320.github.io/DexCfgObfuscator/maven-repo")
+            content {
+                includeGroupByRegex("io\\.github\\.w296488320(\\..*)?")
+            }
+        }
         google()
-        mavenCentral()
         gradlePluginPortal()
+        mavenCentral()
     }
 }
 ```
@@ -1014,7 +1041,7 @@ adb shell cmd package compile -m verify -f com.example.app
 
 ## 11. 生成外部分发包
 
-本章面向插件维护者和离线/内部分发。普通 Maven Central 使用者不需要执行这些命令，也不需要
+本章面向插件维护者和离线/内部分发。普通在线仓库使用者不需要执行这些命令，也不需要
 下载 Maven-repository ZIP。
 
 ```bash
@@ -1033,6 +1060,13 @@ chmod +x build-release.sh
 离线接收方只需解压 ZIP、配置 `pluginManagement.repositories`、应用相同版本号，不需要安装到
 `mavenLocal()`。
 
+维护者把精确匹配版本的 `v<version>` tag 推送到 GitHub 后，自动流程会把两个 publication 合并到
+持久化 `gh-pages` 仓库、部署并验证公网文件，同时把 ZIP 与 SHA-256 挂到同版本 GitHub Release。
+相同字节允许安全重跑；半发布或不同字节会硬失败，不会覆盖既有版本。
+
+首次 tag 前必须先确认仓库可以公开，并在 GitHub **Settings → Pages → Source** 选择
+**GitHub Actions**。普通 workflow token 不具备替维护者改变仓库可见性或首次启用 Pages 的权限。
+
 需要发布到 Maven Central 时，使用 `./build-central-bundle.sh` 生成带 PGP 签名的 Maven-layout ZIP；
 该脚本不会上传。账号注册、namespace、GPG 和 Portal 手工发布步骤见
 [MAVEN_CENTRAL.md](MAVEN_CENTRAL.md)。
@@ -1041,7 +1075,9 @@ chmod +x build-release.sh
 
 ### 12.1 `Plugin ... was not found`
 
-从 Maven Central 获取时检查 `mavenCentral()` 和 canonical plugin ID；从 ZIP 获取时检查：
+从 GitHub Pages 获取时，检查其 Maven URL 是否位于 `pluginManagement.repositories`，并检查
+canonical plugin ID；从 Plugin Portal/Central 获取时分别检查 `gradlePluginPortal()`/
+`mavenCentral()`。从 ZIP 获取时检查：
 
 - Maven 路径是否指向解压后的 `maven-repo/`，而不是 ZIP 或 JAR。
 - `pluginManagement.repositories` 是否位于 `settings.gradle(.kts)`。
@@ -1219,7 +1255,8 @@ DexCfgObfuscator/
 
 - 确认工作树、历史、示例和发布物不包含密钥、签名私钥或业务私有数据。
 - 在干净 clone 中执行测试、`./build-release.sh` 和 Android consumer sample。
-- 校验发布 ZIP 的 SHA-256；Central 发布还要逐项检查 POM、sources、javadoc 和 PGP 签名。
+- 校验 GitHub Pages 的 marker/实现 POM、JAR、module 和远程 sample；校验 Release ZIP 的 SHA-256。
+- Central 发布还要逐项检查 POM、sources、javadoc 和 PGP 签名；Portal 发布需完成 metadata 校验。
 - 在真实 App 上执行 debug/release、JADX、ART、性能和关键业务回归。
 - 已公开版本不可覆盖；任何变更必须提升版本并创建对应 tag。
 

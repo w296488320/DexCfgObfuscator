@@ -1,8 +1,35 @@
 pluginManagement {
-    // Resolve the plugin directly from this source checkout. The sample never depends on
-    // mavenLocal() or the repository's generated maven-repo/ directory.
-    includeBuild('../..')
+    def publishedPluginRepository = providers.gradleProperty('samplePluginRepository').orNull
+    def publishedPluginVersion = providers.gradleProperty('samplePluginVersion').getOrElse('0.1.0')
+
+    // Source mode is the default for repository CI. Supplying samplePluginRepository switches the
+    // same neutral application to an exact remote/local Maven repository and proves that both the
+    // implementation component and Gradle plugin marker are consumable outside this checkout.
+    if (publishedPluginRepository == null) {
+        includeBuild('../..')
+    } else {
+        plugins {
+            id 'io.github.w296488320.dexcfgobf' version publishedPluginVersion
+        }
+    }
+
     repositories {
+        if (publishedPluginRepository != null) {
+            // Lock canonical plugin groups to the explicitly requested repository. This makes
+            // publication checks fail when that repository is incomplete instead of accidentally
+            // succeeding through Plugin Portal or Maven Central.
+            exclusiveContent {
+                forRepository {
+                    maven {
+                        name = 'DexCfgObfuscatorPublishedRepository'
+                        url = uri(publishedPluginRepository)
+                    }
+                }
+                filter {
+                    includeGroupByRegex 'io\\.github\\.w296488320(\\..*)?'
+                }
+            }
+        }
         google()
         mavenCentral()
         gradlePluginPortal()

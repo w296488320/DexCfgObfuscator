@@ -1,0 +1,359 @@
+name: Publish GitHub Pages Maven repository
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: github-pages-maven-publish
+  cancel-in-progress: false
+
+jobs:
+  publish-repository:
+    name: Verify and publish immutable Maven version
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: write
+    outputs:
+      version: ${{ steps.release.outputs.version }}
+
+    steps:
+      - name: Check out release tag
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Validate Gradle wrapper
+        uses: gradle/actions/wrapper-validation@v6
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v6
+        with:
+          cache-provider: basic
+
+      - name: Validate tag and project version
+        id: release
+        shell: bash
+        run: |
+          tag="$GITHUB_REF_NAME"
+          if [[ ! "$tag" =~ ^v([0-9]+\.[0-9]+\.[0-9]+)$ ]]; then
+            echo "Release tag must use v<major>.<minor>.<patch>, got: $tag" >&2
+            exit 1
+          fi
+          version="${BASH_REMATCH[1]}"
+          git fetch --no-tags origin \
+            refs/heads/main:refs/remotes/origin/main
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+            echo "Release tag must point to a commit reachable from main." >&2
+            exit 1
+          fi
+          project_version="$(
+            ./gradlew properties -q --no-daemon --no-configuration-cache \
+              | sed -n 's/^version: //p' \
+              | tail -n 1
+          )"
+          if [[ -z "$project_version" || "$project_version" != "$version" ]]; then
+            echo "Tag/project version mismatch: tag=$version project=$project_version" >&2
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Build tested Maven repository and release bundle
+        env:
+          DEXCFG_EXPECTED_VERSION: ${{ steps.release.outputs.version }}
+        run: ./build-release.sh
+
+      - name: Extract the exact release repository
+        env:
+          RELEASE_VERSION: ${{ steps.release.outputs.version }}
+          STAGING_REPOSITORY: ${{ runner.temp }}/release-package/maven-repo
+        shell: bash
+        run: |
+          archive="$GITHUB_WORKSPACE/release/dex-cfg-obfuscator-$RELEASE_VERSION-maven-repo.zip"
+          package_root="$(dirname "$STAGING_REPOSITORY")"
+          mkdir -p "$package_root"
+          (
+            cd "$package_root"
+            jar --extract --file "$archive"
+          )
+          test -d "$STAGING_REPOSITORY"
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v4
+        with:
+          packages: 'platform-tools platforms;android-36'
+
+      - name: Build protected Android sample from staged publications
+        env:
+          GRADLE_USER_HOME: ${{ runner.temp }}/staged-consumer-gradle-home
+          RELEASE_VERSION: ${{ steps.release.outputs.version }}
+          STAGING_REPOSITORY: ${{ runner.temp }}/release-package/maven-repo
+        run: >-
+          ./gradlew -p samples/android-consumer
+          :app:assembleRelease
+          -PsamplePluginRepository="file://$STAGING_REPOSITORY"
+          -PsamplePluginVersion="$RELEASE_VERSION"
+          -PsampleProtection=both
+          -PsampleMinify=true
+          --refresh-dependencies
+          --no-daemon
+          --no-configuration-cache
+          --no-parallel
+
+      - name: Merge into persistent gh-pages branch
+        env:
+          PAGES_WORKTREE: ${{ runner.temp }}/gh-pages-worktree
+          STAGING_REPOSITORY: ${{ runner.temp }}/release-package/maven-repo
+          RELEASE_VERSION: ${{ steps.release.outputs.version }}
+        shell: bash
+        run: |
+          if git ls-remote --exit-code --heads origin refs/heads/gh-pages >/dev/null 2>&1; then
+            git fetch --no-tags origin \
+              refs/heads/gh-pages:refs/remotes/origin/gh-pages
+            git worktree add --detach "$PAGES_WORKTREE" refs/remotes/origin/gh-pages
+          else
+            git worktree add --detach "$PAGES_WORKTREE" "$GITHUB_SHA"
+            git -C "$PAGES_WORKTREE" switch --orphan gh-pages
+            git -C "$PAGES_WORKTREE" rm -rf --ignore-unmatch -- .
+          fi
+
+          ./scripts/merge-pages-maven-repository.sh \
+            "$STAGING_REPOSITORY" \
+            "$PAGES_WORKTREE" \
+            "$RELEASE_VERSION"
+
+          git -C "$PAGES_WORKTREE" config user.name 'github-actions[bot]'
+          git -C "$PAGES_WORKTREE" config user.email \
+            '41898282+github-actions[bot]@users.noreply.github.com'
+          git -C "$PAGES_WORKTREE" add --all
+          git -C "$PAGES_WORKTREE" diff --cached --check
+          if git -C "$PAGES_WORKTREE" diff --cached --quiet; then
+            echo "gh-pages already contains the byte-identical Maven version."
+          else
+            git -C "$PAGES_WORKTREE" commit -m \
+              "Publish DexCfgObfuscator $RELEASE_VERSION"
+            # Never force: a concurrent branch update must fail instead of
+            # discarding repository history.
+            git -C "$PAGES_WORKTREE" push origin HEAD:refs/heads/gh-pages
+          fi
+
+      - name: Export committed Pages site
+        env:
+          PAGES_WORKTREE: ${{ runner.temp }}/gh-pages-worktree
+          PAGES_SITE: ${{ runner.temp }}/pages-site
+        shell: bash
+        run: |
+          mkdir -p "$PAGES_SITE"
+          git -C "$PAGES_WORKTREE" archive --format=tar HEAD \
+            | tar -xf - -C "$PAGES_SITE"
+
+      - name: Upload GitHub Pages artifact
+        uses: actions/upload-pages-artifact@v5
+        with:
+          path: ${{ runner.temp }}/pages-site
+          include-hidden-files: true
+
+      - name: Preserve GitHub Release assets for downstream publication
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-assets-${{ steps.release.outputs.version }}
+          path: |
+            release/dex-cfg-obfuscator-${{ steps.release.outputs.version }}-maven-repo.zip
+            release/dex-cfg-obfuscator-${{ steps.release.outputs.version }}-maven-repo.zip.sha256
+          if-no-files-found: error
+          retention-days: 7
+
+  deploy-pages:
+    name: Deploy Maven repository to GitHub Pages
+    needs: publish-repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      actions: read
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    outputs:
+      page_url: ${{ steps.deployment.outputs.page_url }}
+
+    steps:
+      - name: Configure GitHub Pages
+        uses: actions/configure-pages@v6
+
+      - name: Deploy GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v5
+
+  verify-public-repository:
+    name: Resolve plugin from the public Pages repository
+    needs:
+      - publish-repository
+      - deploy-pages
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+
+    steps:
+      - name: Check out release tag
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Validate Gradle wrapper
+        uses: gradle/actions/wrapper-validation@v6
+
+      - name: Set up Gradle without a reusable dependency cache
+        uses: gradle/actions/setup-gradle@v6
+        with:
+          cache-disabled: true
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v4
+        with:
+          packages: 'platform-tools platforms;android-36'
+
+      - name: Verify public implementation and marker files
+        id: public_files
+        env:
+          PAGE_URL: ${{ needs.deploy-pages.outputs.page_url }}
+          RELEASE_VERSION: ${{ needs.publish-repository.outputs.version }}
+        shell: bash
+        run: |
+          repository_url="${PAGE_URL%/}/maven-repo"
+          implementation_path="io/github/w296488320/dex-cfg-obfuscator/$RELEASE_VERSION"
+          marker_artifact='io.github.w296488320.dexcfgobf.gradle.plugin'
+          marker_path="io/github/w296488320/dexcfgobf/$marker_artifact/$RELEASE_VERSION"
+
+          download_public_file() {
+            local relative_path="$1"
+            local output_file="$2"
+            curl --fail --location --silent --show-error \
+              --retry 12 --retry-all-errors --retry-delay 5 \
+              "$repository_url/$relative_path" \
+              --output "$output_file"
+            test -s "$output_file"
+          }
+
+          implementation_base="dex-cfg-obfuscator-$RELEASE_VERSION"
+          marker_base="$marker_artifact-$RELEASE_VERSION"
+          download_public_file \
+            "$implementation_path/$implementation_base.pom" \
+            "$RUNNER_TEMP/implementation.pom"
+          download_public_file \
+            "$implementation_path/$implementation_base.jar" \
+            "$RUNNER_TEMP/implementation.jar"
+          download_public_file \
+            "$implementation_path/$implementation_base.jar.sha256" \
+            "$RUNNER_TEMP/implementation.jar.sha256"
+          download_public_file \
+            "$implementation_path/$implementation_base.module" \
+            "$RUNNER_TEMP/implementation.module"
+          download_public_file \
+            "$marker_path/$marker_base.pom" \
+            "$RUNNER_TEMP/marker.pom"
+          download_public_file \
+            "$marker_path/$marker_base.pom.sha256" \
+            "$RUNNER_TEMP/marker.pom.sha256"
+
+          implementation_sha256="$(tr -d '[:space:]' \
+            < "$RUNNER_TEMP/implementation.jar.sha256")"
+          marker_sha256="$(tr -d '[:space:]' \
+            < "$RUNNER_TEMP/marker.pom.sha256")"
+          printf '%s  %s\n' \
+            "$implementation_sha256" "$RUNNER_TEMP/implementation.jar" \
+            | sha256sum --check --strict -
+          printf '%s  %s\n' \
+            "$marker_sha256" "$RUNNER_TEMP/marker.pom" \
+            | sha256sum --check --strict -
+
+          grep -Fq '<groupId>io.github.w296488320</groupId>' \
+            "$RUNNER_TEMP/implementation.pom"
+          grep -Fq "<version>$RELEASE_VERSION</version>" \
+            "$RUNNER_TEMP/implementation.pom"
+          grep -Fq '<artifactId>dex-cfg-obfuscator</artifactId>' \
+            "$RUNNER_TEMP/marker.pom"
+          grep -Fq "<version>$RELEASE_VERSION</version>" \
+            "$RUNNER_TEMP/marker.pom"
+          grep -Fq '"group": "io.github.w296488320"' \
+            "$RUNNER_TEMP/implementation.module"
+          grep -Fq "\"version\": \"$RELEASE_VERSION\"" \
+            "$RUNNER_TEMP/implementation.module"
+          jar tf "$RUNNER_TEMP/implementation.jar" \
+            | grep -Fxq \
+              'META-INF/gradle-plugins/io.github.w296488320.dexcfgobf.properties'
+          echo "repository_url=$repository_url" >> "$GITHUB_OUTPUT"
+
+      - name: Build Android string-protection sample from public repository
+        env:
+          GRADLE_USER_HOME: ${{ runner.temp }}/public-consumer-gradle-home
+          PUBLIC_PLUGIN_REPOSITORY: ${{ steps.public_files.outputs.repository_url }}
+          RELEASE_VERSION: ${{ needs.publish-repository.outputs.version }}
+        run: >-
+          ./gradlew -p samples/android-consumer
+          :app:assembleRelease
+          -PsamplePluginRepository="$PUBLIC_PLUGIN_REPOSITORY"
+          -PsamplePluginVersion="$RELEASE_VERSION"
+          -PsampleProtection=string
+          -PsampleMinify=false
+          --refresh-dependencies
+          --no-daemon
+          --no-configuration-cache
+          --no-parallel
+
+  publish-github-release:
+    name: Publish permanent GitHub Release assets
+    needs:
+      - publish-repository
+      - verify-public-repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      actions: read
+      contents: write
+
+    steps:
+      - name: Check out release tag
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Download verified release assets
+        uses: actions/download-artifact@v8
+        with:
+          name: release-assets-${{ needs.publish-repository.outputs.version }}
+          path: ${{ runner.temp }}/release-assets
+
+      - name: Create or verify GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_VERSION: ${{ needs.publish-repository.outputs.version }}
+        shell: bash
+        run: |
+          archive="$RUNNER_TEMP/release-assets/dex-cfg-obfuscator-$RELEASE_VERSION-maven-repo.zip"
+          checksum="$archive.sha256"
+          ./scripts/publish-github-release-assets.sh \
+            "v$RELEASE_VERSION" \
+            "$archive" \
+            "$checksum"

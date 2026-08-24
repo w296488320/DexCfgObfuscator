@@ -23,7 +23,7 @@ JSON 报告。
 
 - [中文完整文档](doc/README_CN.md)
 - [Full English documentation](doc/README_EN.md)
-- [Maven Central 发布者指南](doc/MAVEN_CENTRAL.md)
+- [Public repository publishing guide / 在线仓库发布指南](doc/MAVEN_CENTRAL.md)
 - [Android consumer sample](samples/android-consumer)
 - [Contributing](CONTRIBUTING.md) | [Security policy](SECURITY.md) | [Changelog](CHANGELOG.md)
 
@@ -74,19 +74,28 @@ R8 Release APK；其他 Gradle/AGP、AAB、dynamic feature 与 OEM 运行行为�
 
 ## Online quick start / 在线仓库快速接入
 
-Maven Central is the canonical online repository. Once `0.1.0` is visible there, consumers only
-need the repository and plugin declarations below; they do not download or build this repository.
-Maven Central 是默认在线仓库；确认 `0.1.0` 已同步可查后，使用者只需下面的仓库和插件声明，
-不需要下载本仓库或自行构建插件。
+Tagged releases are published as a complete Maven repository on GitHub Pages. It is anonymous,
+preserves both the implementation component and Gradle plugin marker, and does not require consumers
+to download or build this repository. Gradle Plugin Portal and Maven Central use the same canonical
+plugin ID when those mirrors become available. / 正式 tag 会把完整 Maven 仓库发布到 GitHub Pages；
+使用者无需账号，也无需下载或自行构建本仓库。Gradle Plugin Portal 与 Maven Central 上线后仍使用
+同一个 canonical plugin ID。
 
 `settings.gradle`:
 
 ```groovy
 pluginManagement {
     repositories {
+        maven {
+            name = 'DexCfgObfuscatorGitHubPages'
+            url = uri('https://w296488320.github.io/DexCfgObfuscator/maven-repo')
+            content {
+                includeGroupByRegex 'io\\.github\\.w296488320(\\..*)?'
+            }
+        }
         google()
-        mavenCentral()
         gradlePluginPortal()
+        mavenCentral()
     }
 }
 ```
@@ -135,10 +144,10 @@ instead; use exactly one version-management style. / 如果根项目不统一管
 
 ### Offline fallback / 离线备用
 
-Until the first Central release, or for offline/internal distribution, download a GitHub Release
-Maven-repository ZIP, extract it, and add its `maven-repo/` directory before the remote repositories
-in `pluginManagement`. / 首个 Central 版本发布前，或需要离线/内部分发时，可下载 GitHub Release
-中的 Maven 仓库 ZIP，解压后把其中的 `maven-repo/` 放在 `pluginManagement` 远程仓库之前。
+For offline/internal distribution, download the matching GitHub Release Maven-repository ZIP,
+extract it, and add its `maven-repo/` directory before the remote repositories in
+`pluginManagement`. / 离线或内部分发可下载同版本 GitHub Release Maven 仓库 ZIP，解压后把其中的
+`maven-repo/` 放在 `pluginManagement` 远程仓库之前。
 
 `dexControlFlowObfuscator {}` is the container for independent protection modules. Enable or disable
 `dexObfuscator {}` and `stringEncryption {}` separately. Version `0.1.0` removes the CFG
@@ -178,8 +187,8 @@ final APK/AAB, so release CI should run the consuming application's final-DEX ga
 
 ## Build and distribute / 构建与分发
 
-This section is for maintainers and offline/internal distribution. Normal Maven Central consumers do
-not run these commands. / 本节用于维护者发布以及离线/内部分发；普通 Maven Central 使用者不执行这些命令。
+This section is for maintainers and offline/internal distribution. Normal online consumers do not
+run these commands. / 本节用于维护者发布以及离线/内部分发；普通在线使用者不执行这些命令。
 
 ```bash
 cd DexCfgObfuscator
@@ -193,6 +202,27 @@ and packages only the current immutable version:
 release/dex-cfg-obfuscator-<version>-maven-repo.zip
 release/dex-cfg-obfuscator-<version>-maven-repo.zip.sha256
 ```
+
+Pushing an immutable `v<version>` tag runs the GitHub Pages publication workflow. It allows an exact
+byte-for-byte retry but refuses a partial or different implementation/marker version, merges the
+Maven layout into the persistent `gh-pages` branch, deploys and verifies the public repository, and
+attaches the offline ZIP plus SHA-256 to the matching GitHub Release. Published bytes are never
+overwritten.
+
+Before the first tag, the maintainer must make the GitHub repository public and select
+**Settings → Pages → Source: GitHub Actions**. The workflow deliberately cannot change repository
+visibility or enable Pages with its normal `GITHUB_TOKEN`.
+
+The local plugin checks and Portal task graph do not need publishing credentials:
+
+```bash
+./gradlew test validatePlugins
+./gradlew publishPlugins --validate-only --dry-run
+```
+
+Authenticated Portal metadata validation uses `./gradlew publishPlugins --validate-only`; the real
+upload uses `./gradlew publishPlugins`. Both require a Gradle Plugin Portal account plus private
+`GRADLE_PUBLISH_KEY` and `GRADLE_PUBLISH_SECRET`, and both are independent from Maven Central.
 
 For Maven Central, generate a signed Maven-layout bundle without uploading it:
 

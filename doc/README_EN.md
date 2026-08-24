@@ -58,13 +58,13 @@ project-level `settings.gradle`, the root `build.gradle`, and the Android module
 Kotlin DSL, custom algorithms, quality gates, and the complete library behavior remain documented in
 the later “Obtaining the plugin,” “Consumer integration,” and “DSL reference” sections.
 
-### Step 1: use the Maven Central online repository
+### Step 1: use the public online Maven repository
 
-This guide uses Maven Central as the default source. Once `0.1.0` is visible in Central, normal
-consumers do not download this repository, copy a JAR, or build the plugin themselves. Only before
-the first Central release, or for offline/internal distribution, download the GitHub Release
-`dex-cfg-obfuscator-0.1.0-maven-repo.zip` and use its complete `maven-repo/`; do not copy only the
-implementation JAR.
+Immutable tags publish a complete Maven repository to GitHub Pages. Normal consumers need no
+account, repository checkout, copied JAR, or local plugin build. Gradle Plugin Portal and Maven
+Central use the same plugin ID when those standard mirrors become available. Download the GitHub
+Release `dex-cfg-obfuscator-0.1.0-maven-repo.zip` only for offline/internal distribution, and use its
+complete `maven-repo/`; do not copy only the implementation JAR.
 
 ### Step 2: register the plugin repository in project-level `settings.gradle`
 
@@ -75,9 +75,16 @@ instead of creating a second one:
 ```groovy
 pluginManagement {
     repositories {
+        maven {
+            name = 'DexCfgObfuscatorGitHubPages'
+            url = uri('https://w296488320.github.io/DexCfgObfuscator/maven-repo')
+            content {
+                includeGroupByRegex 'io\\.github\\.w296488320(\\..*)?'
+            }
+        }
         google()
-        mavenCentral()
         gradlePluginPortal()
+        mavenCentral()
     }
 }
 ```
@@ -456,13 +463,21 @@ module remains responsible for final-DEX control-flow protection and global plai
 
 ## 4. Obtaining the plugin
 
-### 4.1 Maven Central (recommended)
+### 4.1 GitHub Pages Maven (current public endpoint)
 
-This is the default path for normal consumers. Once `0.1.0` is visible in Central, keep
-`mavenCentral()` in `pluginManagement.repositories` and apply
-`io.github.w296488320.dexcfgobf`. Consumers need no Sonatype account, GPG key, or publishing token.
+An immutable `v<version>` tag merges the implementation component and Gradle plugin marker into the
+persistent `gh-pages` Maven repository and refuses to overwrite an existing version. Consumers add
+`https://w296488320.github.io/DexCfgObfuscator/maven-repo` to
+`pluginManagement.repositories`; no GitHub account or token is required.
 
-### 4.2 GitHub Release ZIP (offline/internal use)
+### 4.2 Gradle Plugin Portal and Maven Central (standard mirrors)
+
+Both channels use `io.github.w296488320.dexcfgobf`. Plugin Portal is resolved by
+`gradlePluginPortal()` and Central by `mavenCentral()`. Use GitHub Pages while initial reviews are
+pending; once a mirror is approved, module plugin declarations do not change. Consumers need no
+publisher account, GPG key, or publishing token.
+
+### 4.3 GitHub Release ZIP (offline/internal use)
 
 The distribution is not a standalone copied JAR. It is a directory-style Maven repository containing
 the current implementation JAR, POM metadata, Gradle plugin marker, and checksums:
@@ -475,7 +490,7 @@ dex-cfg-obfuscator-0.1.0-maven-repo.zip
 
 Extract it to a stable location and point the consuming build at `maven-repo/`.
 
-### 4.3 Maintainer/development verification: publish from source
+### 4.4 Maintainer/development verification: publish from source
 
 This is not a normal consumer setup step. It is only for plugin maintenance, source-development
 verification, or producing an isolated local repository.
@@ -496,9 +511,16 @@ destination.
 ```groovy
 pluginManagement {
     repositories {
+        maven {
+            name = 'DexCfgObfuscatorGitHubPages'
+            url = uri('https://w296488320.github.io/DexCfgObfuscator/maven-repo')
+            content {
+                includeGroupByRegex 'io\\.github\\.w296488320(\\..*)?'
+            }
+        }
         google()
-        mavenCentral()
         gradlePluginPortal()
+        mavenCentral()
     }
 }
 ```
@@ -510,9 +532,16 @@ For a ZIP distribution, add the local Maven directory as the first repository.
 ```kotlin
 pluginManagement {
     repositories {
+        maven {
+            name = "DexCfgObfuscatorGitHubPages"
+            url = uri("https://w296488320.github.io/DexCfgObfuscator/maven-repo")
+            content {
+                includeGroupByRegex("io\\.github\\.w296488320(\\..*)?")
+            }
+        }
         google()
-        mavenCentral()
         gradlePluginPortal()
+        mavenCentral()
     }
 }
 ```
@@ -1114,7 +1143,7 @@ run critical business flows. A successful build or install alone is not runtime 
 
 ## 11. Creating a distribution
 
-This section is for plugin maintainers and offline/internal distribution. Normal Maven Central
+This section is for plugin maintainers and offline/internal distribution. Normal online-repository
 consumers do not run these commands or download the Maven-repository ZIP.
 
 ```bash
@@ -1133,6 +1162,15 @@ The script:
 Offline consumers extract the ZIP, add its `maven-repo/` to `pluginManagement.repositories`, and apply the
 same version. `mavenLocal()` is not required.
 
+After a maintainer pushes the exact `v<version>` tag, automation merges both publications into the
+persistent `gh-pages` repository, deploys and verifies the public files, and attaches the ZIP and
+SHA-256 to the matching GitHub Release. A byte-identical retry is safe; partial or different bytes
+fail without overwriting an existing version.
+
+Before the first tag, confirm that the repository is safe to expose and select
+**Settings → Pages → Source: GitHub Actions**. A normal workflow token cannot change repository
+visibility or perform the initial Pages enablement for the maintainer.
+
 For Maven Central, `./build-central-bundle.sh` creates a PGP-signed Maven-layout ZIP without
 uploading it. Account, namespace, GPG, and manual Portal instructions are in
 [MAVEN_CENTRAL.md](MAVEN_CENTRAL.md).
@@ -1141,7 +1179,9 @@ uploading it. Account, namespace, GPG, and manual Portal instructions are in
 
 ### 12.1 `Plugin ... was not found`
 
-For Maven Central, check `mavenCentral()` and the canonical plugin ID. For a ZIP, check that:
+For GitHub Pages, check its Maven URL under `pluginManagement.repositories` and the canonical plugin
+ID. For Plugin Portal/Central, check `gradlePluginPortal()`/`mavenCentral()` respectively. For a ZIP,
+check that:
 
 - The Maven URL points to the extracted `maven-repo/`, not the ZIP or JAR.
 - `pluginManagement.repositories` is in `settings.gradle(.kts)`.
@@ -1374,7 +1414,10 @@ Before every public release:
 - Confirm the worktree, history, samples, and archives contain no credentials, signing private keys,
   or private application data.
 - Run tests, `./build-release.sh`, and the Android consumer sample from a pristine clone.
-- Verify the release SHA-256; for Central, inspect POM, sources, javadoc, and PGP signatures.
+- Verify the Pages marker/implementation POMs, JAR, module, and remote sample; verify the Release ZIP
+  SHA-256.
+- For Central, inspect POM, sources, javadoc, and PGP signatures; for Portal, complete metadata
+  validation.
 - Run debug/release, JADX, ART, performance, and critical business-flow validation on a real app.
 - Never overwrite a published version; every change requires a new version and matching tag.
 

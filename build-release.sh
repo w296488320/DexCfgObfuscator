@@ -164,7 +164,10 @@ if find "$package_root" -name .DS_Store -print -quit | grep -q .; then
     exit 1
 fi
 
-jar --create --file "$temporary_archive" -C "$package_root" .
+# An exact-tag retry must reproduce the same bytes so the immutable GitHub Release gate can
+# distinguish a safe retry from a changed artifact. JAR/ZIP entry order follows the deterministic
+# staging layout above; a fixed entry timestamp removes the remaining filesystem-time variance.
+jar --create --file "$temporary_archive" --date=2000-01-01T00:00:00Z -C "$package_root" .
 archive_entries="$(jar --list --file "$temporary_archive")"
 for required_entry in \
     "maven-repo/io/github/w296488320/dex-cfg-obfuscator/$version/dex-cfg-obfuscator-$version.jar" \

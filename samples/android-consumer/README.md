@@ -1,7 +1,9 @@
 # Android consumer sample
 
-This is a neutral Android application that consumes the plugin directly from the current source
-checkout through `includeBuild('../..')`. It does not read `mavenLocal()` or `maven-repo/`.
+This is a neutral Android application. By default it consumes the plugin directly from the current
+source checkout through `includeBuild('../..')`; it never reads `mavenLocal()` implicitly. It can
+also verify an exact published Maven repository by setting `samplePluginRepository` and
+`samplePluginVersion`.
 
 From the repository root, build one of the three protection combinations:
 
@@ -22,6 +24,19 @@ From the repository root, build one of the three protection combinations:
 ./gradlew -p samples/android-consumer :app:assembleRelease \
   -PsampleProtection=both -PsampleMinify=true --no-configuration-cache
 ```
+
+To verify the public GitHub Pages Maven repository rather than the included source build:
+
+```bash
+./gradlew -p samples/android-consumer :app:assembleRelease \
+  -PsamplePluginRepository=https://w296488320.github.io/DexCfgObfuscator/maven-repo \
+  -PsamplePluginVersion=0.1.0 \
+  -PsampleProtection=string \
+  --no-configuration-cache
+```
+
+The repository and version properties are explicit so CI cannot silently fall back to the source
+checkout when online publication is missing or incomplete.
 
 `sampleMinify` accepts only `true` or `false` and defaults to `false`. The minimal consumer rule keeps
 `SamplePayload` available for final-DEX inspection while allowing R8 to optimize and rename it, so the
