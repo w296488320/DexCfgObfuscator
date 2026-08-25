@@ -43,6 +43,8 @@ JSON 报告。
 - Encodes and pads original switch keys with random 32-bit keys and visible character cases.
 - Relocates `fill-array-data`, packed-switch, and sparse-switch payloads on safe reorder paths.
 - Preserves/rebuilds try ranges and catch handlers on supported transformations.
+- **Unreleased after `0.1.0`:** preserves the minimum DEX line-number program required for crash
+  diagnosis and registers a `retrace<Variant>DexCfgStackTrace` task for build-matched R8 retracing.
 - Re-parses staged DEX files and verifies registers, branches, payloads, handlers, and try ranges.
 - Falls back conservatively when verifier analysis, register formats, or post-transform budgets fail.
 - Scans final application DEX runtime string payloads and fails when plaintext selected for
@@ -66,6 +68,13 @@ JSON 报告。
 | Java baseline | Java 17 |
 | Development baseline | Gradle 9.6.1, AGP 9.3.1 |
 | Artifact type | Gradle plugin JAR distributed through a Maven repository |
+
+> **Development status:** stack-trace line preservation and the retrace task are implemented on
+> `dev`/`main` after `v0.1.0`, but are not part of the published `0.1.0` artifact. Online `0.1.0`
+> consumers must wait for the next immutable release; published `0.1.0` bytes will not be
+> overwritten. / **开发状态：** 行号保留与 retrace task 已在 `v0.1.0` 之后的 `dev`/`main`
+> 源码中实现，但线上 `0.1.0` 尚不包含该能力，必须等待下一个不可变正式版本，不能覆盖已发布的
+> `0.1.0`。
 
 The checked-in Android sample verifies string-only, CFG-only, combined, and R8-enabled Release APK
 builds on this baseline. Other Gradle/AGP versions, AAB, dynamic features, and OEM runtime behavior
@@ -177,6 +186,39 @@ The report is written to:
 app/build/reports/dex-cfg-obfuscator/<variant>.json
 ```
 
+The following workflow is currently available only from a `dev`/`main` source build after `v0.1.0`;
+the published `0.1.0` plugin does not register this task. Install Android SDK Command-line Tools and
+ensure its `retrace` executable is available first. CFG changes instruction layout inside a method,
+but it does not add, remove, or rename Java call frames. The transform therefore keeps the minimum
+valid `LineNumber` information already present in its input DEX; it cannot invent a missing source
+position. For an R8-minified release, retrace a crash with the task generated for that same variant:
+
+```bash
+./gradlew :app:retraceReleaseDexCfgStackTrace \
+  --trace-file=/absolute/path/crash.txt \
+  --output-file=/absolute/path/crash.retraced.txt \
+  --mapping-file=/private/archive/that-release/mapping.txt
+```
+
+`--trace-file` is required; `--output-file` and `--mapping-file` are optional. Without an output
+option, the task inserts `.retraced` before the input extension (`crash.txt` becomes
+`crash.retraced.txt`); a name without an extension receives `.retraced.txt`. A non-minified variant
+is copied unchanged because its CFG stack frames already retain source lines. A minified variant
+requires the unmodified R8 `mapping.txt` produced by the same build; no second CFG mapping is needed.
+The task does not prove that an archived mapping belongs to a crash, so bind APK/AAB, version/build
+identity, APK hash, and mapping in private release storage. Omit `--mapping-file` only for a
+just-built, confirmed-matching variant in the current checkout. The task never rebuilds or changes
+an APK and never uploads the mapping or trace.
+
+这套流程目前只在 `v0.1.0` 之后的 `dev`/`main` 源码构建中可用，线上 `0.1.0` 不会注册该任务。
+请先安装 Android SDK Command-line Tools 并确认其中的 `retrace` 可执行。CFG 只改变方法内部指令
+布局，默认保留输入 DEX 中已有且有效的最小 residual line，不会凭空生成缺失源码位置；R8 日志
+继续使用同一次构建且未修改的原始
+`mapping.txt`，不需要也不应生成第二份 CFG mapping。任务不会自动证明归档 mapping 与线上 APK
+匹配，发布系统应私密绑定版本/build identity、APK 哈希和 mapping。详细说明见
+[中文第 7 步](doc/README_CN.md#第-7-步还原线上崩溃栈)与
+[English Step 7](doc/README_EN.md#step-7-retrace-a-production-crash)。
+
 Android application variants use `ALL` scope for string encryption: every app, project-library, and
 external-library class whose name matches `packages` and not `excludePackages` is eligible without
 extra per-dependency configuration. Android library modules may also apply the plugin when publishing
@@ -275,6 +317,9 @@ generated report paths.
 - Decompiler rendering is not an API. A character switch may still be displayed as decimal integers.
 - Some register encodings, wide/range instructions, monitor operations, verifier-ambiguous methods,
   or very large methods are deliberately reordered or skipped.
+- A historical `Unknown Source` frame with neither a line number nor a DEX PC cannot be reconstructed
+  after the fact. A single stack trace records call frames, not every branch taken inside a method,
+  so retracing restores source call-stack context rather than the complete dynamic control-flow path.
 - String encryption covers JVM `LDC` literals and supported constant fields in matching app and
   dependency-graph classes, not resources, manifests, native strings, annotation/metadata values, or
   every string that R8 may

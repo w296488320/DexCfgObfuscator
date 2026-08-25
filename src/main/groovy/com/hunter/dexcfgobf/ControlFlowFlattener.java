@@ -79,7 +79,9 @@ final class ControlFlowFlattener {
      *     导致新体里无法解析。故按“目标 payload 的原索引”重绑到 out 上的 arrData(origIdx) 标签。
      *   - 其余指令原样加入。
      */
-    private static void emitBody(MethodImplementationBuilder out, BuilderInstruction insn) {
+    private static void emitBody(MethodImplementationBuilder out, BuilderInstruction insn,
+                                 DebugPositionMap debugPositions, int originalIndex) {
+        debugPositions.emit(out, originalIndex);
         if (insn.getOpcode() == Opcode.FILL_ARRAY_DATA) {
             int tgt = targetIndex(insn); // payload 的原索引（work 内）
             int reg = ((com.android.tools.smali.dexlib2.iface.instruction.OneRegisterInstruction) insn).getRegisterA();
@@ -91,6 +93,14 @@ final class ControlFlowFlattener {
 
     MethodImplementation flatten(Method method, MethodImplementation impl, long seed,
                                  int paramRegisterCount) {
+        return flatten(method, impl, seed, paramRegisterCount,
+                DebugPositionMap.capture(impl));
+    }
+
+    MethodImplementation flatten(Method method, MethodImplementation impl, long seed,
+                                 int paramRegisterCount,
+                                 DebugPositionMap debugPositions) {
+        debugPositions.requireCompatible(impl);
         MutableMethodImplementation src = new MutableMethodImplementation(impl);
 
         if (src.getRegisterCount() + ADDED_REGISTERS > config.maxRegisters) {
@@ -104,6 +114,7 @@ final class ControlFlowFlattener {
         RegisterShifter.Result shifted = RegisterShifter.shift(src, ADDED_REGISTERS);
         MutableMethodImplementation work =
                 new MutableMethodImplementation(shifted.builder.getMethodImplementation());
+        debugPositions.requireCompatible(work);
         int stateShareA = 0;
         int stateShareB = 1;
         int workReg = 2;
@@ -333,6 +344,7 @@ final class ControlFlowFlattener {
             // 它把异常对象存入 vX 后设置 state 跳 dispatcher；真实续体作为 blk(b) 普通块。
             if (isHandlerEntry[b]) {
                 out.addLabel(moveExc(b));
+                debugPositions.emit(out, start);
                 out.addInstruction(insns.get(start)); // move-exception vX（块首，异常边到达）
                 // 进入“该块 move-exception 之后的续体”，其 state 就是本块 id（blk(b) 指向 start+1）。
                 transitionSalt = emitTransition(out, b, stateShareA, stateShareB, workReg,
@@ -344,7 +356,7 @@ final class ControlFlowFlattener {
 
             int bodyStart = isHandlerEntry[b] ? start + 1 : start;
             for (int i = bodyStart; i < end - 1; i++) {
-                emitBody(out, insns.get(i));
+                emitBody(out, insns.get(i), debugPositions, i);
             }
             // 边界情况：handler 块只有 move-exception 一条指令（end==start+1）。
             // 此时续体为空，blk(b) 需要一个到“落空后继块”的跳转（下方 last 逻辑处理 end-1==start 的 move-exception，
@@ -361,11 +373,14 @@ final class ControlFlowFlattener {
             Opcode lop = last.getOpcode();
 
             if (isReturn(lop) || lop == Opcode.THROW) {
-                emitBody(out, last);
+                emitBody(out, last, debugPositions, end - 1);
                 out.addLabel(blkEnd(b));               // 真实指令段结束
             } else if (isGoto(lop)) {
                 out.addLabel(blkEnd(b));               // goto 是控制流，不算“可抛真实指令”
                 int tgtBlk = requireRealBlock(blockOfIndex[targetIndex(last)], k);
+                // The original goto is replaced by an equivalent state transition. Attach its
+                // source position to the first replacement instruction for complete provenance.
+                debugPositions.emit(out, end - 1);
                 transitionSalt = emitTransition(out, tgtBlk, stateShareA, stateShareB, workReg,
                         routeReg, regionOfBlock, stateKey, aliasEnabled, aliasKeyA, aliasKeyB,
                         encoderTemplate, K1, K2, K3, seed, transitionSalt);
@@ -373,6 +388,7 @@ final class ControlFlowFlattener {
                 out.addLabel(blkEnd(b));
                 int takenBlk = requireRealBlock(blockOfIndex[targetIndex(last)], k);
                 int fallBlk = requireRealBlock(blockOfIndex[end], k);
+                debugPositions.emit(out, end - 1);
                 out.addInstruction(rebuildConditional(last, out.getLabel(taken(b))));
                 transitionSalt = emitTransition(out, fallBlk, stateShareA, stateShareB, workReg,
                         routeReg, regionOfBlock, stateKey, aliasEnabled, aliasKeyA, aliasKeyB,
@@ -382,7 +398,7 @@ final class ControlFlowFlattener {
                         routeReg, regionOfBlock, stateKey, aliasEnabled, aliasKeyA, aliasKeyB,
                         encoderTemplate, K1, K2, K3, seed, transitionSalt);
             } else {
-                emitBody(out, last);
+                emitBody(out, last, debugPositions, end - 1);
                 out.addLabel(blkEnd(b));
                 int fallBlk = requireRealBlock(blockOfIndex[end], k);
                 transitionSalt = emitTransition(out, fallBlk, stateShareA, stateShareB, workReg,

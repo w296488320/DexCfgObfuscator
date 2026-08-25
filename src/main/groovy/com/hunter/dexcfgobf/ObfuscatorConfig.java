@@ -49,8 +49,15 @@ public final class ObfuscatorConfig {
     /** 默认支持含 try/catch 的方法；仅显式设为 true 时保守跳过。 */
     public boolean skipMethodsWithTryCatch = false;
 
-    /** 是否移除调试行号信息（.line / .local），进一步妨碍反编译定位。 */
-    public boolean stripDebugInfo = true;
+    /**
+     * 是否移除方法调试信息。
+     *
+     * <p>默认保留 stack trace 所需的最小行号位置；release + R8 场景中这些是 R8
+     * residual line，仍需使用同一次构建的 mapping.txt 才能恢复源码位置。局部变量等
+     * 寄存器调试信息不会因该默认值而盲目复制。程序化调用方可显式设为 true 恢复旧的
+     * strip 行为，但届时普通 {@code Unknown Source} 崩溃栈无法进行行级还原。</p>
+     */
+    public boolean stripDebugInfo = false;
 
     /** 写回前重新解析并执行 DEX 结构验证；失败时整目录回滚。 */
     public boolean verifyStructure = true;

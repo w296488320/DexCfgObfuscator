@@ -72,13 +72,32 @@ public class VerifierTypeSeparatorTest {
                 stringRegister, arrayRegister);
 
         ObfuscatorStats stats = new ObfuscatorStats();
+        DebugPositionMap originalPositions = DebugPositionMap.capture(source);
         MethodImplementation flattened = new CfgFlattener(config, ObfuscatorLogger.STDOUT, stats)
-                .flatten(original, separated.implementation, true, separated.addedRegisters);
+                .flatten(original, separated.implementation, originalPositions,
+                        true, separated.addedRegisters);
         assertNotNull("type-separated method should enter strong flattening", flattened);
         assertTrue(stats.methodsFlattened == 1);
+        boolean sawOriginalLine = false;
+        boolean sawOriginalSource = false;
+        for (com.android.tools.smali.dexlib2.iface.debug.DebugItem item
+                : flattened.getDebugItems()) {
+            if (item instanceof com.android.tools.smali.dexlib2.iface.debug.LineNumber) {
+                int line = ((com.android.tools.smali.dexlib2.iface.debug.LineNumber) item)
+                        .getLineNumber();
+                assertTrue(line >= 1);
+                sawOriginalLine |= line == 110 || line == 120;
+            } else if (item instanceof com.android.tools.smali.dexlib2.iface.debug.SetSourceFile) {
+                sawOriginalSource |= "ReferenceReuse.java".equals(
+                        ((com.android.tools.smali.dexlib2.iface.debug.SetSourceFile) item)
+                                .getSourceFile());
+            }
+        }
+        assertTrue("original lines must survive verifier separation", sawOriginalLine);
+        assertTrue("original source file must survive verifier separation", sawOriginalSource);
 
         ImmutableMethod transformed = method(flattened);
-        DexPool pool = new DexPool(Opcodes.getDefault());
+        DexPool pool = new SourceFileAwareDexPool(Opcodes.getDefault());
         pool.internClass(classDef(transformed));
         Path dex = Files.createTempFile("dex-cfg-verifier-separated-", ".dex");
         try {
@@ -131,12 +150,15 @@ public class VerifierTypeSeparatorTest {
         MethodImplementationBuilder b = new MethodImplementationBuilder(2);
         Label bytes = b.getLabel("Bytes");
         Label done = b.getLabel("Done");
+        b.addSetSourceFile(new ImmutableStringReference("ReferenceReuse.java"));
+        b.addLineNumber(110);
         b.addInstruction(new BuilderInstruction11n(Opcode.CONST_4, 0, 0));
         b.addInstruction(new BuilderInstruction21t(Opcode.IF_EQZ, 0, bytes));
         b.addInstruction(new BuilderInstruction21c(Opcode.CONST_STRING, 1,
                 new ImmutableStringReference("direct")));
         b.addInstruction(new BuilderInstruction10t(Opcode.GOTO, done));
         b.addLabel("Bytes");
+        b.addLineNumber(120);
         b.addInstruction(new BuilderInstruction11n(Opcode.CONST_4, 0, 1));
         b.addInstruction(new BuilderInstruction22c(Opcode.NEW_ARRAY, 1, 0,
                 new ImmutableTypeReference("[B")));

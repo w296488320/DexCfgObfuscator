@@ -1030,6 +1030,28 @@ class DexCfgObfuscatorPlugin implements Plugin<Project> {
                     }
                 }
 
+                // Stack traces must be decoded with the exact mapping produced for this variant.
+                // The task deliberately does not depend on obfTask: crash triage must never rebuild
+                // or mutate application artifacts, and a current rebuild is not proof that its
+                // mapping matches an already released APK. Build first, or pass an archived mapping.
+                project.tasks.register(
+                        "retrace${variantCap}DexCfgStackTrace",
+                        RetraceDexCfgStackTraceTask) { RetraceDexCfgStackTraceTask task ->
+                    task.group = 'obfuscation'
+                    task.description = "Retrace a local ${variantName} crash stack-trace file " +
+                            'with CFG-preserved positions and the matching R8 mapping.'
+                    task.minified.set(useR8Mapping)
+                    if (useR8Mapping) {
+                        task.mappingFile.set(mappingProvider)
+                    }
+                    Object android = project.extensions.findByName('android')
+                    File sdkDirectory = android != null && android.hasProperty('sdkDirectory')
+                            ? android.sdkDirectory : null
+                    if (sdkDirectory != null && sdkDirectory.isDirectory()) {
+                        task.androidSdkDirectory.set(sdkDirectory)
+                    }
+                }
+
                 // 若宿主生成 dex 完整性清单，让它在混淆之后运行（记录混淆后的 hash）。
                 // 惰性 matching：对“将来才注册”的任务也生效。
                 project.tasks.matching { it.name == "generate${variantCap}ApkIntegrityAsset" }
@@ -3647,7 +3669,7 @@ class DexCfgObfuscatorPlugin implements Plugin<Project> {
 
     /** 只包含会改变 CFG 产物的配置；质量阈值变化复用同一统计并重新执行门禁。 */
     private static String cfgTransformDigest(ObfuscatorConfig config) {
-        return configurationDigest('cfg-transform-v3-exact-member-scope-marker-v1',
+        return configurationDigest('cfg-transform-v4-stacktrace-lines-marker-v1',
                 config.depth, config.maxRegisters, config.maxInstructions, config.seed,
                 config.skipMethodsWithTryCatch, config.stripDebugInfo, config.verifyStructure,
                 config.enableRegisterTypeSeparation, config.enablePayloadRelocation,

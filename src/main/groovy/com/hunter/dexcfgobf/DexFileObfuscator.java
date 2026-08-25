@@ -134,7 +134,7 @@ final class DexFileObfuscator {
         DexFile out = new ImmutableDexFile(dex.getOpcodes(), newClasses);
         // 先写临时文件再原子替换，避免中途失败破坏原 dex。
         File tmp = new File(dexFile.getParentFile(), dexFile.getName() + ".obf.tmp");
-        DexPool pool = new DexPool(dex.getOpcodes());
+        DexPool pool = new SourceFileAwareDexPool(dex.getOpcodes());
         for (ClassDef c : out.getClasses()) {
             pool.internClass(c);
         }
@@ -185,7 +185,11 @@ final class DexFileObfuscator {
         VerifierTypeSeparator.Result separated = typeSeparator == null
                 ? null : typeSeparator.separate(method);
         MethodImplementation candidate = separated == null ? impl : separated.implementation;
-        MethodImplementation obf = flattener.flatten(method, candidate,
+        // Capture line/source provenance before verifier register separation rebuilds the method.
+        // Separation and register shifting retain one output instruction per input instruction, so
+        // this original index map remains valid through the later CFG transform.
+        DebugPositionMap debugPositions = DebugPositionMap.capture(impl);
+        MethodImplementation obf = flattener.flatten(method, candidate, debugPositions,
                 separated != null, separated == null ? 0 : separated.addedRegisters);
         TransformationOutcome outcome = flattener.getLastOutcome();
         if (outcome == null) {

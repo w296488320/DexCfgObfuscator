@@ -91,10 +91,17 @@ final class CfgFlattener {
     }
 
     MethodImplementation flatten(Method method, MethodImplementation impl) {
-        return flatten(method, impl, false, 0);
+        return flatten(method, impl, DebugPositionMap.capture(impl), false, 0);
     }
 
     MethodImplementation flatten(Method method, MethodImplementation impl,
+                                 boolean registerTypesSeparated, int addedRegisters) {
+        return flatten(method, impl, DebugPositionMap.capture(impl),
+                registerTypesSeparated, addedRegisters);
+    }
+
+    MethodImplementation flatten(Method method, MethodImplementation impl,
+                                 DebugPositionMap originalDebugPositions,
                                  boolean registerTypesSeparated, int addedRegisters) {
         lastOutcome = null;
         resetSwitchPaddingStats();
@@ -127,6 +134,22 @@ final class CfgFlattener {
                     TransformationOutcome.Reason.TOO_LARGE));
         }
 
+        // Candidate implementations produced by verifier type separation and register shifting
+        // retain a one-to-one instruction index. Refuse to transform on any future drift instead
+        // of silently assigning source lines to unrelated opcodes.
+        DebugPositionMap debugPositions;
+        try {
+            debugPositions = config.stripDebugInfo
+                    ? originalDebugPositions.stripped() : originalDebugPositions;
+            debugPositions.requireCompatible(impl);
+        } catch (RuntimeException positionFailure) {
+            logger.warn("debug position alignment failed on " + method.getDefiningClass()
+                    + "->" + method.getName() + " : " + positionFailure
+                    + " (keep original)");
+            return finish(null, TransformationOutcome.skipped(
+                    TransformationOutcome.Reason.UNSUPPORTED));
+        }
+
         try {
             // ---- 混合分派 ----
             // A) 含 try/catch：平坦化会破坏 move-exception 必为 handler 首指令的约束，
@@ -149,7 +172,7 @@ final class CfgFlattener {
                 try {
                     long methodSeed = stableSeed(method, impl, insnCount, insnCount);
                     ControlFlowFlattener strong = new ControlFlowFlattener(config, stats);
-                    out = strong.flatten(method, impl, methodSeed, paramRegs);
+                    out = strong.flatten(method, impl, methodSeed, paramRegs, debugPositions);
                     if (out != null) {
                         PostTransformBudget.verify(impl, out, config);
                         String template = ControlFlowFlattener.templateName(methodSeed, config);
@@ -181,7 +204,8 @@ final class CfgFlattener {
                         RegisterShifter.Result shifted = RegisterShifter.shift(
                                 new MutableMethodImplementation(impl), 1);
                         MethodImplementation shiftedImpl = shifted.builder.getMethodImplementation();
-                        out = reorderBasicBlocks(method, shiftedImpl, 0);
+                        debugPositions.requireCompatible(shiftedImpl);
+                        out = reorderBasicBlocks(method, shiftedImpl, 0, debugPositions);
                         if (out != null && paddedSwitches > 0) {
                             PostTransformBudget.verify(impl, out, config);
                             reorderScratchAdded = 1;
@@ -198,7 +222,7 @@ final class CfgFlattener {
                 }
                 if (out == null) {
                     reorderFailure = TransformationOutcome.Reason.UNSUPPORTED;
-                    out = reorderBasicBlocks(method, impl, -1);
+                    out = reorderBasicBlocks(method, impl, -1, debugPositions);
                     if (out != null) PostTransformBudget.verify(impl, out, config);
                 }
             }
@@ -299,8 +323,10 @@ final class CfgFlattener {
      * 以块为单位、按打乱顺序重新发射整个方法体；用具名 Label 重建所有分支。
      */
     private MethodImplementation reorderBasicBlocks(Method method, MethodImplementation impl,
-                                                    int switchScratchReg) {
+                                                    int switchScratchReg,
+                                                    DebugPositionMap debugPositions) {
         MutableMethodImplementation src = new MutableMethodImplementation(impl);
+        debugPositions.requireCompatible(src);
         List<BuilderInstruction> insns = src.getInstructions();
         int n = insns.size();
 
@@ -403,6 +429,7 @@ final class CfgFlattener {
             out.addLabel(blockLabel(start));
             for (int i = start; i < end; i++) {
                 BuilderInstruction insn = insns.get(i);
+                debugPositions.emit(out, i);
                 SwitchPaddingPlan switchPlan = switchPlans.get(i);
                 if (switchPlan != null) {
                     emitPaddedSwitch(out, switchPlan, switchScratchReg);

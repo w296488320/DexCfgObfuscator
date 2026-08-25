@@ -37,6 +37,10 @@ DexCfgObfuscator 是一个 Android 字符串与 DEX 控制流混淆 Gradle 插�
 | 当前开发基线 | Gradle 9.6.1、AGP 9.3.1 |
 | DEX 实现 | `com.android.tools.smali:smali-dexlib2:3.0.9` |
 
+> **开发状态：** 崩溃栈行号保留和 `retrace<Variant>DexCfgStackTrace` 已在 `v0.1.0` 之后的
+> `dev`/`main` 源码中实现，但不属于已发布的线上 `0.1.0`。在下一个不可变正式版本发布前，
+> `0.1.0` 使用者不会获得该 task；禁止覆盖已发布的 `0.1.0` 制品。
+
 当前可复现验证矩阵为 JDK 17、Gradle 9.6.1、AGP 9.3.1，以及 application Release 的
 string-only、CFG-only、双开、R8 开/关 APK 构建；library 的 `PROJECT` 字符串阶段由单元/契约测试覆盖。
 其他 Gradle/AGP 版本、AAB 和 OEM 设备运行行为均不作未经测试的兼容承诺。dynamic feature 的严格
@@ -201,6 +205,46 @@ library 没有 application 最终 DEX，因此不会生成 application 的 schem
 至少确认构建日志和报告中的 `dexFailed=0`、`stringCoverageStatus=FULL`、
 `stringPlaintextVerified=true`、`stringPlaintextLeaks=0`。成功编译只代表本地结构门禁通过，发布前仍要
 在目标 Android 版本上执行冷启动、关键业务路径以及 application/library 边界的真机回归。
+
+### 第 7 步：还原线上崩溃栈
+
+> **版本要求：** 本节能力当前仅适用于 `v0.1.0` 之后的 `dev`/`main` 源码构建；线上
+> `0.1.0` 没有这个 task，也不会保留 CFG 方法的行号。旧 APK 已产生的 `Unknown Source` 不能因
+> 升级插件而被事后修复。
+
+请先安装 Android SDK **Command-line Tools**，并确认 Android SDK 目录的
+`cmdline-tools/latest/bin/retrace`（Windows 为 `retrace.bat`）或版本目录中存在该可执行文件。
+
+CFG 混淆只改变方法内部的指令布局，不会增加、删除或重命名 Java 调用帧。插件默认保留输入 DEX
+中已经存在且有效的最小 `LineNumber` 信息，不会凭空生成缺失的源码位置；开启 R8 后，这些行号是
+R8 处理后的 residual line，需要和**同一次构建**、未经修改的原始 `mapping.txt` 配合，才能回到
+原始类名、方法名和源码行。CFG 不改 Java 符号，因此不需要 DexCfg 专用 mapping，也不要修改 R8
+生成的 `mapping.txt`。
+
+每个启用 `dexObfuscator` 的 application variant 都会注册
+`retrace<Variant>DexCfgStackTrace`。例如还原 Release 日志：
+
+```bash
+./gradlew :app:retraceReleaseDexCfgStackTrace \
+  --trace-file=/absolute/path/crash.txt \
+  --output-file=/absolute/path/crash.retraced.txt \
+  --mapping-file=/private/archive/that-release/mapping.txt
+```
+
+`--trace-file` 必填；`--output-file`、`--mapping-file` 可省略。省略输出路径时，任务在同目录把 `.retraced` 插到原扩展名前，
+例如 `crash.txt` 生成 `crash.retraced.txt`；无扩展名则追加 `.retraced.txt`。
+对于未开启 minify 的 variant，调用帧和源码行已经可读，任务会原样写出并在日志中说明；对于
+minified variant，任务必须找到该 variant 同一次构建生成的 `mapping.txt`。只有当前 checkout 刚
+完成该 variant 构建且已确认匹配时才可省略 `--mapping-file`；处理归档版本时必须显式传入那个版本
+保存的 mapping。任务不会自动验证 mapping 是否属于产生该 crash 的 APK，因此发布系统必须通过
+versionCode/build ID、APK/AAB SHA-256 等身份把两者绑定归档。缺失或 Retrace 失败时会直接失败，
+不会生成看似可信的错误结果。该任务不会触发 APK 重建或再次混淆，避免用当前代码新生成的 mapping
+误处理线上旧版本日志。
+
+插件不会上传 mapping 或 crash trace。请在发布 CI 中将 APK/AAB、版本标识和 `mapping.txt` 作为
+同一组私有符号产物保存，不要提交到公开仓库或打进 APK。历史上已经只剩 `Unknown Source`、同时没有
+行号或 DEX PC 的日志无法事后精确恢复；单次 stack trace 也不记录方法内部实际走过的全部分支，因此
+这里恢复的是原始调用栈上下文，不是完整的动态控制流路径。
 
 ## 2. 当前已经实现的能力
 
@@ -387,6 +431,16 @@ schema-10 报告，再对 **variant 聚合统计** 统一执行 `dexObfuscator.m
 | `HIGH` | 28,000 | 12,000 | 192× |
 
 超限时先放弃强模板或 switch padding，再尝试普通基本块重排。
+
+### 2.13 崩溃栈行号保留与 Retrace
+
+- CFG 发射真实业务指令时会把输入 DEX 指令位置上已有的有效 residual line 重新绑定到变换后的
+  builder location；dispatcher、trampoline 等合成指令不会附加伪造源码行。
+- 为避免寄存器平移或 verifier 类型拆分后产生错误局部变量信息，只保留崩溃定位所需的最小行号，
+  不盲目复制 `.local` 等寄存器调试项。
+- 未 minify 的栈无需符号映射；R8 栈使用同一 variant、同一次构建的 `mapping.txt` 通过
+  `retrace<Variant>DexCfgStackTrace` 交给官方 R8 Retrace 处理。
+- task 与构建转换都在本地运行，不上传源码、DEX、mapping 或 crash trace。
 
 ## 3. 工作流水线
 
@@ -1119,7 +1173,21 @@ range/wide 约束或方法结构不适合强模板。最终 `dexFailed=0` 且应
 - 缩小 `dexObfuscator.obfClass` 范围。
 - 将超大/大量 switch 的生成代码加入 `dexObfuscator.blackClass`。
 
-### 12.6 连续第二次构建突然膨胀
+### 12.6 找不到 `retraceReleaseDexCfgStackTrace` 或提示找不到 Android Retrace
+
+线上 `0.1.0` 不包含栈回溯 task；该能力当前仅存在于 `v0.1.0` 之后的 `dev`/`main` 源码构建，
+需要等待下一个正式版本。不要在宿主脚本中手工伪造同名 task。若 task 已存在但提示找不到 Retrace，
+安装 Android SDK Command-line Tools，并检查 `android.sdkDirectory`、`ANDROID_HOME` 或
+`ANDROID_SDK_ROOT` 指向的 SDK 下是否存在 `cmdline-tools/latest/bin/retrace` 或某个版本目录的
+`bin/retrace`。
+
+### 12.7 回溯结果仍然只有 `Unknown Source`
+
+先确认 crash 来自使用新版本重新构建的 APK，并确认传入的是该 APK 同次 R8 构建的原始
+`mapping.txt`。旧 `0.1.0` APK 的 CFG 方法已经没有行号；普通 Java stack trace 又不携带 DEX PC，
+因此无法靠新增或修改 mapping 事后恢复具体源码行。不要修改归档的 R8 mapping。
+
+### 12.8 连续第二次构建突然膨胀
 
 `0.1.0` 仍是 producer 输出目录的就地后处理模式，但会保存带校验和的 CFG evidence，其中包含目录指纹、
 变换配置摘要和统计。只有当前 DEX 字节精确匹配 evidence 中的 post-transform 指纹，且配置摘要一致时才跳过。
@@ -1136,24 +1204,24 @@ producer 重新生成、源码改变或 DEX 内容变化会触发正常混淆，
 后续仍应迁移到具有显式输入/输出的稳定 AGP DEX Artifact Transform，以取代任务名和 producer
 目录适配。
 
-### 12.7 与 StringFog 冲突
+### 12.9 与 StringFog 冲突
 
 本字符串阶段和旧 `stringfog` plugin 不能同时启用。先移除旧 plugin 与顶层 `stringfog {}`；嵌套
 `dexControlFlowObfuscator { stringFog { ... } }`（小写 `stringfog` 也支持）只是兼容别名。
 
-### 12.8 implementation 找不到或无法构造
+### 12.10 implementation 找不到或无法构造
 
 将构建期实现放到插件可见的 classpath（通常是 `buildSrc`），或显式设置 `algorithm`。运行时 instance
 实现必须是 Android 源集中的 concrete public 类，提供 public 无参构造和 public non-static
 `decrypt(byte[], byte[])`，且二者不能声明 checked exception；静态实现使用 `decryptorStatic true`
 并提供 public static `decrypt`。
 
-### 12.9 round-trip 或 identity 校验失败
+### 12.11 round-trip 或 identity 校验失败
 
 检查构建期/运行期算法是否一致、`decrypt` 是否返回 null、key 生成器是否匹配，以及 `encrypt` 是否
 只是返回明文字节。不要默认关闭 `verifyRoundTrip` 或打开 `allowIdentityCiphertext` 来掩盖实现错误。
 
-### 12.10 configuration cache 报错
+### 12.12 configuration cache 报错
 
 字符串阶段使用当前 Gradle 进程 registry 保存自定义对象，目前统一要求
 `--no-configuration-cache`。CFG-only 构建不受此限制。
@@ -1210,6 +1278,9 @@ producer 重新生成、源码改变或 DEX 内容变化会触发正常混淆，
 - 当前 AGP 适配仍依赖 producer 任务名称和输出目录；不是标准 post-R8 DEX Artifact Transform。
 - 一些短寄存器格式无法在整体平移后表示 v16 以上寄存器，会回退重排。
 - invoke-range、wide、monitor、未初始化对象、复杂异常边等方法可能只重排或跳过。
+- 历史 `Unknown Source` 帧如果同时缺少行号和 DEX PC，无法仅凭文本在事后精确定位到原源码行。
+  单次 stack trace 只记录调用帧，不记录方法内部走过的完整分支历史；Retrace 恢复的是调用栈和源码
+  位置上下文，不是完整动态控制流路径。
 - 可见字符 case 的反编译显示取决于工具版本。
 - 体积和启动/解释开销会随等级、方法数量和原始 switch 数明显增加。
 - 本地结构验证不能替代真实 ART、OEM ROM、性能和业务回归。

@@ -1,0 +1,3 @@
+java.lang.IllegalStateException: neutral retrace fixture
+	at com.example.dexcfgsample.SamplePayload.messageFor(SamplePayload.java:13)
+	at com.example.dexcfgsample.MainActivity.onCreate(MainActivity.java:12)

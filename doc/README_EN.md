@@ -45,6 +45,11 @@ Current coordinates:
 | Current development baseline | Gradle 9.6.1, AGP 9.3.1 |
 | DEX implementation | `com.android.tools.smali:smali-dexlib2:3.0.9` |
 
+> **Development status:** stack-trace line preservation and
+> `retrace<Variant>DexCfgStackTrace` are implemented on `dev`/`main` after `v0.1.0`, but are not in
+> the published `0.1.0` artifact. Online `0.1.0` consumers must wait for the next immutable release;
+> published `0.1.0` bytes must not be overwritten.
+
 The reproducible verification matrix currently covers JDK 17, Gradle 9.6.1, AGP 9.3.1, and
 application Release APK builds in string-only, CFG-only, combined, R8-on, and R8-off modes. The
 library `PROJECT` string path is covered by unit/contract tests. Other Gradle/AGP versions, AAB, and
@@ -223,6 +228,51 @@ At minimum, check `dexFailed=0`, `stringCoverageStatus=FULL`,
 `stringPlaintextVerified=true`, and `stringPlaintextLeaks=0` in the build output and report. A
 successful build proves only the local structural gates; test cold start, critical flows, and
 application/library boundaries on the target Android versions before release.
+
+### Step 7: retrace a production crash
+
+> **Version requirement:** this section currently applies only to a `dev`/`main` source build after
+> `v0.1.0`. The published `0.1.0` plugin neither registers this task nor preserves CFG method lines.
+> Upgrading the plugin cannot repair `Unknown Source` frames already produced by an old APK.
+
+Install Android SDK **Command-line Tools** first and confirm that
+`cmdline-tools/latest/bin/retrace` (`retrace.bat` on Windows), or the equivalent versioned directory,
+exists in the configured Android SDK.
+
+CFG obfuscation changes instruction layout inside a method; it does not add, remove, or rename Java
+call frames. The plugin preserves the minimum valid `LineNumber` information already present in the
+input DEX; it cannot invent a missing source position. After R8, those positions are R8 residual
+lines and need the unmodified original `mapping.txt` from the **same build** to restore original
+class names, method names, and source lines. CFG does not rename Java symbols, so no DexCfg-specific
+second mapping is needed and the R8 mapping must not be modified.
+
+Every application variant with `dexObfuscator` enabled registers
+`retrace<Variant>DexCfgStackTrace`. For a Release trace:
+
+```bash
+./gradlew :app:retraceReleaseDexCfgStackTrace \
+  --trace-file=/absolute/path/crash.txt \
+  --output-file=/absolute/path/crash.retraced.txt \
+  --mapping-file=/private/archive/that-release/mapping.txt
+```
+
+`--trace-file` is required. `--output-file` and `--mapping-file` are optional; when the output is omitted, the task inserts `.retraced`
+before the input extension beside that file (`crash.txt` becomes `crash.retraced.txt`), or appends
+`.retraced.txt` to a name without an extension. For a non-minified variant, frames and source lines are already
+readable, so the task writes the trace unchanged and explains this in the build log. For a minified
+variant, it must find that variant's `mapping.txt` from the same build. Omit `--mapping-file` only
+for a just-built, confirmed-matching variant in the current checkout; for an archived release, pass
+its archived mapping explicitly. The task does not prove that a mapping belongs to the APK that
+produced a crash. Release storage must bind them with versionCode/build ID and APK/AAB SHA-256 or an
+equivalent immutable identity. The task never rebuilds or re-obfuscates an APK, so it cannot silently
+substitute a newly generated mapping for a production one. A missing mapping or non-zero Retrace
+result fails the task instead of producing misleading output.
+
+The plugin does not upload mappings or crash traces. Archive each APK/AAB, release identity, and
+`mapping.txt` together as private CI symbol artifacts; do not commit mappings publicly or package
+them in the APK. A historical `Unknown Source` frame with neither a line number nor a DEX PC cannot
+be reconstructed after the fact. A single stack trace also does not record every branch taken inside
+a method, so this restores source call-stack context, not the complete dynamic control-flow path.
 
 ## 2. Implemented capabilities
 
@@ -431,6 +481,18 @@ branch distances. Current internal limits are implementation details and may cha
 
 When a limit is exceeded, the plugin abandons the strong template or switch padding and attempts
 plain block reordering.
+
+### 2.13 Stack-trace line preservation and Retrace
+
+- When CFG emits real business instructions, it rebinds an existing valid residual line from the
+  input DEX to the new builder location. Synthetic dispatchers and trampolines receive no fabricated
+  source lines.
+- To avoid incorrect variable metadata after register shifting or verifier-type separation, the
+  transform preserves the minimum line program used for crash diagnosis instead of blindly copying
+  register-scoped `.local` items.
+- Non-minified traces need no symbol map. R8 traces use the same variant's same-build `mapping.txt`
+  through `retrace<Variant>DexCfgStackTrace`, which delegates symbol recovery to official R8 Retrace.
+- The task and transform both run locally and do not upload source, DEX, mappings, or crash traces.
 
 ## 3. Pipeline
 
@@ -1228,7 +1290,23 @@ clean `--rerun-tasks` build starts again from the producer's original artifact. 
 - Narrow `dexObfuscator.obfClass`.
 - Exclude generated code with very large or numerous switches.
 
-### 12.6 A second consecutive build grows unexpectedly
+### 12.6 Missing `retraceReleaseDexCfgStackTrace` or Android Retrace executable
+
+The published `0.1.0` artifact does not contain the retrace task. It currently exists only in a
+`dev`/`main` source build after `v0.1.0` and requires the next formal release for online consumers.
+Do not fabricate a same-named task in the consumer build. If the task exists but cannot locate
+Retrace, install Android SDK Command-line Tools and verify that the SDK selected by
+`android.sdkDirectory`, `ANDROID_HOME`, or `ANDROID_SDK_ROOT` contains
+`cmdline-tools/latest/bin/retrace` or a versioned `cmdline-tools/*/bin/retrace`.
+
+### 12.7 Retraced output still contains `Unknown Source`
+
+Confirm that the crash came from an APK rebuilt with the new plugin and that the mapping is the
+unmodified R8 mapping from that exact APK build. CFG methods in old `0.1.0` APKs have no line number,
+and ordinary Java stack traces contain no DEX PC, so no added or edited mapping can recover the exact
+source line after the fact.
+
+### 12.8 A second consecutive build grows unexpectedly
 
 Version `0.1.0` still post-processes the producer output directory in place, but records checksummed
 CFG evidence containing the directory fingerprint, transform digest, and statistics. It skips only
@@ -1248,26 +1326,26 @@ the old version:
 A future integration should still use a stable AGP DEX artifact with explicit inputs and outputs,
 removing the task-name and producer-directory adapter.
 
-### 12.7 `stringEncryption requires packages/fogPackages`
+### 12.9 `stringEncryption requires packages/fogPackages`
 
 The effective string include list is empty. Omit `packages`/`fogPackages` to inherit
 `dexObfuscator.obfClass`, or
 set a non-empty string-specific list. An explicit `[]` intentionally disables inheritance and is not
 treated as “all classes.”
 
-### 12.8 Configuration-cache failure
+### 12.10 Configuration-cache failure
 
 The string stage keeps custom cipher/key objects as build-process state and does not yet support the
 Gradle configuration cache. Run with `--no-configuration-cache`. The CFG-only stage can still be used
 without enabling string encryption.
 
-### 12.9 StringFog conflict
+### 12.11 StringFog conflict
 
 Remove the old `stringfog` plugin before enabling `stringEncryption`. DexCfgObfuscator refuses to
 instrument the same classes twice. The nested `stringFog {}` / `stringfog {}` compatibility aliases do not apply the
 old plugin.
 
-### 12.10 Custom implementation cannot be constructed or round-trip verification fails
+### 12.12 Custom implementation cannot be constructed or round-trip verification fails
 
 - Put a build-time copy on the Gradle plugin classpath, typically in `buildSrc`, or pass
   `algorithm = new BuildTimeCipher()`.
@@ -1280,7 +1358,7 @@ old plugin.
 - If `identity ciphertext` is reported, the algorithm returned plaintext bytes. Replace the
   placeholder algorithm rather than enabling `allowIdentityCiphertext` for release builds.
 
-### 12.11 A known plaintext remains in the artifact
+### 12.13 A known plaintext remains in the artifact
 
 For an application, confirm that AGP includes the class in its `ALL` instrumentation input and that
 the class matches `packages` without matching `excludePackages`; this applies equally to app, local
@@ -1294,7 +1372,7 @@ With `debug true`, lifecycle logs identify transformed call-site locations and b
 print plaintext. This flag is diagnostic logging only and does not enable, disable, or select build
 variants.
 
-### 12.12 A custom algorithm changed but cached output was reused
+### 12.14 A custom algorithm changed but cached output was reused
 
 The transform fingerprint includes component class bytes and an overridden `toString()`. If mutable
 configuration lives elsewhere, change `configurationId`, then run a clean or `--rerun-tasks` build.
@@ -1310,6 +1388,10 @@ that string-encrypted classes were reused.
 - Some short-register formats cannot encode shifted registers above v15 and therefore fall back.
 - invoke-range, wide, monitor, uninitialized-object, and complex exception-edge methods may reorder
   or skip.
+- A historical `Unknown Source` frame with neither a line number nor a DEX PC cannot be mapped back
+  to an exact source line. A single stack trace records call frames rather than every branch taken
+  inside a method; Retrace restores call-stack and source-position context, not a complete dynamic
+  control-flow history.
 - Visible character cases depend on decompiler rendering.
 - DEX size and startup/interpreter overhead grow with level, target methods, and original switches.
 - String rewriting covers JVM `LDC` values and supported `static final String` ConstantValue fields,

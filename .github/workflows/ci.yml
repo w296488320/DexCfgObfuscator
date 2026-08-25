@@ -67,6 +67,9 @@ jobs:
           # This is the regression that proves string encryption does not accidentally enable CFG.
           - protection: string
             minify: false
+          # Exercise CFG line-number preservation without R8 so regressions are attributable to CFG.
+          - protection: cfg
+            minify: false
           # This covers mapping-aware verification when both protections run after R8.
           - protection: both
             minify: true
@@ -101,6 +104,56 @@ jobs:
           --no-daemon
           --no-configuration-cache
           --no-parallel
+
+      - name: Smoke-test CFG stack-trace retracing
+        if: matrix.protection != 'string'
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+
+          report = json.loads(Path(
+              'samples/android-consumer/app/build/reports/dex-cfg-obfuscator/release.json'
+          ).read_text())
+          probes = [method for method in report['methods']
+                    if method['descriptor'] == '(I)I']
+          assert len(probes) == 1, probes
+          assert probes[0]['mode'] == 'flattened', probes[0]
+          assert probes[0]['reason'] == 'flatten_safe', probes[0]
+          PY
+          apkanalyzer_path="$(command -v apkanalyzer)"
+          probe_args=(
+            --apkanalyzer "${apkanalyzer_path}"
+            --apk samples/android-consumer/app/build/outputs/apk/release/app-release-unsigned.apk
+          )
+          if [[ '${{ matrix.minify }}' == 'true' ]]; then
+            probe_args+=(
+              --mapping samples/android-consumer/app/build/outputs/mapping/release/mapping.txt
+            )
+          fi
+          python3 samples/android-consumer/verify_retrace_probe.py "${probe_args[@]}"
+          retraced_file="${RUNNER_TEMP}/release-${{ matrix.protection }}-minify-${{ matrix.minify }}.retraced.txt"
+          trace_file="${GITHUB_WORKSPACE}/samples/android-consumer/fixtures/retrace-release.txt"
+          if [[ '${{ matrix.minify }}' == 'true' ]]; then
+            trace_file="${GITHUB_WORKSPACE}/samples/android-consumer/fixtures/retrace-minified-release.txt"
+          fi
+          ./gradlew -p samples/android-consumer \
+            :app:retraceReleaseDexCfgStackTrace \
+            -PsampleProtection=${{ matrix.protection }} \
+            -PsampleMinify=${{ matrix.minify }} \
+            --trace-file="${trace_file}" \
+            --output-file="${retraced_file}" \
+            --no-daemon \
+            --no-configuration-cache \
+            --no-parallel
+          test -s "${retraced_file}"
+          if [[ '${{ matrix.minify }}' == 'false' ]]; then
+            cmp samples/android-consumer/fixtures/retrace-release.txt "${retraced_file}"
+          else
+            grep -Fq 'com.example.dexcfgsample.ReleaseCrashProbe.divideForRetrace(ReleaseCrashProbe.java:18)' \
+              "${retraced_file}"
+          fi
 
       - name: Upload protection report
         if: always()
