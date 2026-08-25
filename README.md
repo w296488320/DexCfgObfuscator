@@ -210,8 +210,11 @@ attaches the offline ZIP plus SHA-256 to the matching GitHub Release. Published 
 overwritten.
 
 Before the first tag, the maintainer must make the GitHub repository public and select
-**Settings → Pages → Source: GitHub Actions**. The workflow deliberately cannot change repository
-visibility or enable Pages with its normal `GITHUB_TOKEN`.
+**Settings → Pages → Source: GitHub Actions**. Then open
+**Settings → Environments → github-pages → Deployment branches and tags**, keep the `main` branch
+rule, and add a tag rule named `v*`; otherwise the Pages deployment rejects release tags even when
+the build and uploaded artifact succeed. The workflow deliberately cannot change repository
+visibility, enable Pages, or relax environment deployment rules with its normal `GITHUB_TOKEN`.
 
 The local plugin checks and Portal task graph do not need publishing credentials:
 

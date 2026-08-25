@@ -1168,8 +1168,12 @@ SHA-256 to the matching GitHub Release. A byte-identical retry is safe; partial 
 fail without overwriting an existing version.
 
 Before the first tag, confirm that the repository is safe to expose and select
-**Settings → Pages → Source: GitHub Actions**. A normal workflow token cannot change repository
-visibility or perform the initial Pages enablement for the maintainer.
+**Settings → Pages → Source: GitHub Actions**. Then open
+**Settings → Environments → github-pages → Deployment branches and tags**, keep the `main` branch
+rule, and add a tag rule named `v*`; otherwise Pages rejects release-tag deployments even after the
+artifact has been built and uploaded successfully. A normal workflow token cannot change repository
+visibility, perform the initial Pages enablement, or relax environment deployment rules for the
+maintainer.
 
 For Maven Central, `./build-central-bundle.sh` creates a PGP-signed Maven-layout ZIP without
 uploading it. Account, namespace, GPG, and manual Portal instructions are in

@@ -180,7 +180,9 @@ unset MAVEN_CENTRAL_USERNAME MAVEN_CENTRAL_PASSWORD \
 - **GitHub Pages Maven** 托管本项目生成的完整静态 Maven layout。workflow 只接受指向 `main` 历史、
   且名称精确等于 `v<project.version>` 的 tag；同版本只能字节完全一致地重试，不能覆盖。正式 tag 前
   需先确认历史中没有凭据/私有数据、把仓库设为 **Public**，再在 Settings → Pages 将 Source 设为
-  **GitHub Actions**。普通 `GITHUB_TOKEN` 不能代替维护者执行这两个一次性权限操作。
+  **GitHub Actions**；随后在 Settings → Environments → github-pages 的 Deployment branches and tags
+  中保留 `main` 分支规则并新增 `v*` tag 规则，否则 release tag 会被环境保护规则拒绝部署。普通
+  `GITHUB_TOKEN` 不能代替维护者执行这些一次性权限操作。
 
 - **Maven Central** 托管普通 Maven publication。本项目同时上传实现组件和 Gradle plugin marker 后，宿主可在
   `pluginManagement.repositories` 中添加 `mavenCentral()`，再通过 plugins DSL 使用插件。

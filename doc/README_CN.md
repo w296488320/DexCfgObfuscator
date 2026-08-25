@@ -1065,7 +1065,10 @@ chmod +x build-release.sh
 相同字节允许安全重跑；半发布或不同字节会硬失败，不会覆盖既有版本。
 
 首次 tag 前必须先确认仓库可以公开，并在 GitHub **Settings → Pages → Source** 选择
-**GitHub Actions**。普通 workflow token 不具备替维护者改变仓库可见性或首次启用 Pages 的权限。
+**GitHub Actions**。然后进入
+**Settings → Environments → github-pages → Deployment branches and tags**，保留 `main` 分支规则并
+新增名为 `v*` 的 tag 规则；否则即使制品构建和上传成功，Pages 仍会拒绝 release tag 的部署。
+普通 workflow token 不具备替维护者改变仓库可见性、首次启用 Pages 或放宽环境部署规则的权限。
 
 需要发布到 Maven Central 时，使用 `./build-central-bundle.sh` 生成带 PGP 签名的 Maven-layout ZIP；
 该脚本不会上传。账号注册、namespace、GPG 和 Portal 手工发布步骤见
