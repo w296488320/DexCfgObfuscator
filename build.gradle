@@ -17,7 +17,7 @@ def pomGroupId = providers.gradleProperty('POM_GROUP_ID')
 def pomArtifactId = providers.gradleProperty('POM_ARTIFACT_ID')
         .getOrElse('dex-cfg-obfuscator')
 def pomVersion = providers.gradleProperty('POM_VERSION')
-        .getOrElse('0.1.0')
+        .getOrElse('0.1.1')
 def publicPluginId = providers.gradleProperty('POM_PLUGIN_ID')
         .getOrElse('io.github.w296488320.dexcfgobf')
 def projectUrl = 'https://github.com/w296488320/DexCfgObfuscator'

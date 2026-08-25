@@ -4,6 +4,8 @@ All notable user-visible changes are documented in this file. The project follow
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-08-25
+
 ### Added
 
 - Variant-aware `retrace<Variant>DexCfgStackTrace` tasks

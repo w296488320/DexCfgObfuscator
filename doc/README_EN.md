@@ -40,15 +40,14 @@ Current coordinates:
 |---|---|
 | Gradle Plugin ID | `io.github.w296488320.dexcfgobf` |
 | Group | `io.github.w296488320` |
-| Version | `0.1.0` |
+| Version | `0.1.1` |
 | Java | 17 |
 | Current development baseline | Gradle 9.6.1, AGP 9.3.1 |
 | DEX implementation | `com.android.tools.smali:smali-dexlib2:3.0.9` |
 
-> **Development status:** stack-trace line preservation and
-> `retrace<Variant>DexCfgStackTrace` are implemented on `dev`/`main` after `v0.1.0`, but are not in
-> the published `0.1.0` artifact. Online `0.1.0` consumers must wait for the next immutable release;
-> published `0.1.0` bytes must not be overwritten.
+> **Version boundary:** stack-trace line preservation and
+> `retrace<Variant>DexCfgStackTrace` are available in `0.1.1`. APKs built with `0.1.0` do not gain
+> missing CFG line positions retroactively, and the published `0.1.0` bytes remain immutable.
 
 The reproducible verification matrix currently covers JDK 17, Gradle 9.6.1, AGP 9.3.1, and
 application Release APK builds in string-only, CFG-only, combined, R8-on, and R8-off modes. The
@@ -68,7 +67,7 @@ the later “Obtaining the plugin,” “Consumer integration,” and “DSL ref
 Immutable tags publish a complete Maven repository to GitHub Pages. Normal consumers need no
 account, repository checkout, copied JAR, or local plugin build. Gradle Plugin Portal and Maven
 Central use the same plugin ID when those standard mirrors become available. Download the GitHub
-Release `dex-cfg-obfuscator-0.1.0-maven-repo.zip` only for offline/internal distribution, and use its
+Release `dex-cfg-obfuscator-0.1.1-maven-repo.zip` only for offline/internal distribution, and use its
 complete `maven-repo/`; do not copy only the implementation JAR.
 
 ### Step 2: register the plugin repository in project-level `settings.gradle`
@@ -105,12 +104,12 @@ Keep the consumer's existing Android plugins and versions, and add only the line
 ```groovy
 plugins {
     // Keep the existing Android/Kotlin plugin declarations here.
-    id 'io.github.w296488320.dexcfgobf' version '0.1.0' apply false
+    id 'io.github.w296488320.dexcfgobf' version '0.1.1' apply false
 }
 ```
 
 If versions are not managed in the root project, the module may instead use
-`id 'io.github.w296488320.dexcfgobf' version '0.1.0'`. Choose one version-management style; do not declare
+`id 'io.github.w296488320.dexcfgobf' version '0.1.1'`. Choose one version-management style; do not declare
 conflicting versions in both locations.
 If the root script does not already contain `plugins {}`, place the new block after any existing
 `buildscript {}` block and before other ordinary configuration blocks.
@@ -231,8 +230,8 @@ application/library boundaries on the target Android versions before release.
 
 ### Step 7: retrace a production crash
 
-> **Version requirement:** this section currently applies only to a `dev`/`main` source build after
-> `v0.1.0`. The published `0.1.0` plugin neither registers this task nor preserves CFG method lines.
+> **Version requirement:** this section requires `0.1.1` or later. The published `0.1.0` plugin
+> neither registers this task nor preserves CFG method lines.
 > Upgrading the plugin cannot repair `Unknown Source` frames already produced by an old APK.
 
 Install Android SDK **Command-line Tools** first and confirm that
@@ -545,7 +544,7 @@ The distribution is not a standalone copied JAR. It is a directory-style Maven r
 the current implementation JAR, POM metadata, Gradle plugin marker, and checksums:
 
 ```text
-dex-cfg-obfuscator-0.1.0-maven-repo.zip
+dex-cfg-obfuscator-0.1.1-maven-repo.zip
 └── maven-repo/
     └── io/github/w296488320/...
 ```
@@ -610,8 +609,8 @@ pluginManagement {
 
 ### 5.3 Groovy application module `build.gradle`
 
-The module examples below assume that the root `build.gradle` already declares version `0.1.0`
-with `apply false`. Add `version '0.1.0'` after the module plugin ID only when there is no
+The module examples below assume that the root `build.gradle` already declares version `0.1.1`
+with `apply false`. Add `version '0.1.1'` after the module plugin ID only when there is no
 project-level declaration.
 
 ```groovy
@@ -710,7 +709,7 @@ dexControlFlowObfuscator {
 ### 5.6 Android library module
 
 An Android library can apply the same plugin, but only its pre-D8/R8 string stage runs. This is for
-protecting a standalone AAR before publishing it. A consuming `0.1.0` application already uses
+protecting a standalone AAR before publishing it. A consuming `0.1.1` application already uses
 `ALL` scope and does not require the plugin on each library dependency.
 
 ```groovy
@@ -785,7 +784,7 @@ the library must also be distributed as a protected standalone artifact.
 
 ### 5.7 Build
 
-Version `0.1.0` still performs an in-place post-processing step on the DEX producer output. It
+Version `0.1.1` still performs an in-place post-processing step on the DEX producer output. It
 records the content fingerprint of every successfully transformed DEX directory. A consecutive
 incremental build skips an exact post-transform match, while changed or regenerated DEX is processed
 normally. Strict Release builds automatically invalidate the ASM transform input and verify every
@@ -1285,16 +1284,15 @@ restores it together with all evidence/state/pending files and every fresh-direc
 clean `--rerun-tasks` build starts again from the producer's original artifact. First:
 
 - Look for `skip unchanged already-obfuscated DEX dir`; if it is absent and an old plugin may be in
-  use, confirm that the host requests version `0.1.0`.
+  use, confirm that the host requests version `0.1.1`.
 - Reduce `HIGH` to `MEDIUM` or `LOW`.
 - Narrow `dexObfuscator.obfClass`.
 - Exclude generated code with very large or numerous switches.
 
 ### 12.6 Missing `retraceReleaseDexCfgStackTrace` or Android Retrace executable
 
-The published `0.1.0` artifact does not contain the retrace task. It currently exists only in a
-`dev`/`main` source build after `v0.1.0` and requires the next formal release for online consumers.
-Do not fabricate a same-named task in the consumer build. If the task exists but cannot locate
+The published `0.1.0` artifact does not contain the retrace task. Upgrade to `0.1.1` or later; do not
+fabricate a same-named task in the consumer build. If the task exists but cannot locate
 Retrace, install Android SDK Command-line Tools and verify that the SDK selected by
 `android.sdkDirectory`, `ANDROID_HOME`, or `ANDROID_SDK_ROOT` contains
 `cmdline-tools/latest/bin/retrace` or a versioned `cmdline-tools/*/bin/retrace`.
@@ -1308,7 +1306,7 @@ source line after the fact.
 
 ### 12.8 A second consecutive build grows unexpectedly
 
-Version `0.1.0` still post-processes the producer output directory in place, but records checksummed
+Version `0.1.1` still post-processes the producer output directory in place, but records checksummed
 CFG evidence containing the directory fingerprint, transform digest, and statistics. It skips only
 when current DEX bytes exactly match the evidenced post-transform fingerprint and the transform
 digest also matches. Missing, corrupt, state-only, or mismatched evidence fails closed and asks for a

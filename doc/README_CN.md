@@ -32,14 +32,14 @@ DexCfgObfuscator 是一个 Android 字符串与 DEX 控制流混淆 Gradle 插�
 |---|---|
 | Gradle Plugin ID | `io.github.w296488320.dexcfgobf` |
 | Group | `io.github.w296488320` |
-| Version | `0.1.0` |
+| Version | `0.1.1` |
 | Java | 17 |
 | 当前开发基线 | Gradle 9.6.1、AGP 9.3.1 |
 | DEX 实现 | `com.android.tools.smali:smali-dexlib2:3.0.9` |
 
-> **开发状态：** 崩溃栈行号保留和 `retrace<Variant>DexCfgStackTrace` 已在 `v0.1.0` 之后的
-> `dev`/`main` 源码中实现，但不属于已发布的线上 `0.1.0`。在下一个不可变正式版本发布前，
-> `0.1.0` 使用者不会获得该 task；禁止覆盖已发布的 `0.1.0` 制品。
+> **版本边界：** 崩溃栈行号保留和 `retrace<Variant>DexCfgStackTrace` 从 `0.1.1` 开始提供。
+> 使用 `0.1.0` 构建的 APK 不会因升级插件而被事后补回已经丢失的 CFG 行号；已发布的 `0.1.0`
+> 制品仍保持不可变。
 
 当前可复现验证矩阵为 JDK 17、Gradle 9.6.1、AGP 9.3.1，以及 application Release 的
 string-only、CFG-only、双开、R8 开/关 APK 构建；library 的 `PROJECT` 字符串阶段由单元/契约测试覆盖。
@@ -58,7 +58,7 @@ string-only、CFG-only、双开、R8 开/关 APK 构建；library 的 `PROJECT` 
 正式 tag 会把完整 Maven 仓库发布到 GitHub Pages；普通项目无需账号、无需下载本仓库，也无需自行
 构建插件。Gradle Plugin Portal 与 Maven Central 上线后仍使用同一个 plugin ID，可作为标准镜像。
 只有离线/内部分发时，才下载 GitHub Release 中的
-`dex-cfg-obfuscator-0.1.0-maven-repo.zip`，解压后使用其中完整的 `maven-repo/`，不要只复制实现 JAR。
+`dex-cfg-obfuscator-0.1.1-maven-repo.zip`，解压后使用其中完整的 `maven-repo/`，不要只复制实现 JAR。
 
 ### 第 2 步：在项目级 `settings.gradle` 注册插件仓库
 
@@ -93,12 +93,12 @@ pluginManagement {
 ```groovy
 plugins {
     // 保留这里已有的 Android/Kotlin 插件声明。
-    id 'io.github.w296488320.dexcfgobf' version '0.1.0' apply false
+    id 'io.github.w296488320.dexcfgobf' version '0.1.1' apply false
 }
 ```
 
 如果不在根项目统一管理插件版本，也可以在模块的 `plugins` 块中直接写
-`id 'io.github.w296488320.dexcfgobf' version '0.1.0'`，两种写法选择一种即可，不要重复声明不同版本。
+`id 'io.github.w296488320.dexcfgobf' version '0.1.1'`，两种写法选择一种即可，不要重复声明不同版本。
 根脚本原来没有 `plugins {}` 时，新建的块应放在已有 `buildscript {}` 之后、其他普通配置块之前。
 
 ### 第 4 步：在 application 模块 `build.gradle` 应用并配置
@@ -208,8 +208,8 @@ library 没有 application 最终 DEX，因此不会生成 application 的 schem
 
 ### 第 7 步：还原线上崩溃栈
 
-> **版本要求：** 本节能力当前仅适用于 `v0.1.0` 之后的 `dev`/`main` 源码构建；线上
-> `0.1.0` 没有这个 task，也不会保留 CFG 方法的行号。旧 APK 已产生的 `Unknown Source` 不能因
+> **版本要求：** 本节能力需要 `0.1.1` 或更高版本；`0.1.0` 没有这个 task，也不会保留 CFG
+> 方法的行号。旧 APK 已产生的 `Unknown Source` 不能因
 > 升级插件而被事后修复。
 
 请先安装 Android SDK **Command-line Tools**，并确认 Android SDK 目录的
@@ -490,7 +490,7 @@ outputs 执行常量池门禁。最终 DEX 的 CFG 防护和全局明文证明�
 Maven 仓库，并且只包含当前版本：
 
 ```text
-dex-cfg-obfuscator-0.1.0-maven-repo.zip
+dex-cfg-obfuscator-0.1.1-maven-repo.zip
 └── maven-repo/
     └── io/github/w296488320/...
 ```
@@ -553,8 +553,8 @@ pluginManagement {
 
 ### 5.3 Groovy application 模块 `build.gradle`
 
-以下模块示例假定项目根 `build.gradle` 已用 `apply false` 声明 `0.1.0`。如果没有项目级声明，
-才在模块的插件 ID 后追加 `version '0.1.0'`。
+以下模块示例假定项目根 `build.gradle` 已用 `apply false` 声明 `0.1.1`。如果没有项目级声明，
+才在模块的插件 ID 后追加 `version '0.1.1'`。
 
 ```groovy
 import com.hunter.dexcfgobf.gradle.ObfuscationLevel
@@ -693,7 +693,7 @@ application 最终 DEX/APK/AAB 的全局证明。发布 CI 仍应解包最终 AA
 
 #### 5.6.1 旧版预加密 library evidence 兼容（高级）
 
-`0.1.0` 的普通 application 路径不需要 `dependencyEvidenceProjects` 或
+`0.1.1` 的普通 application 路径不需要 `dependencyEvidenceProjects` 或
 `dependencyEvidenceVariants`：App 的 `ALL` scope 会直接改写完整依赖图，并在最终 DEX 上统一验证。
 这两个字段只用于迁移旧构建链：同一 Gradle 构建中的 project library 已经在 App 插桩之前由旧版流程
 预加密，App 因而看不到它的原始候选字符串，但仍需把该 library 的旧 member-scoped evidence 合并到
@@ -718,7 +718,7 @@ AAR/JAR 都不要配置它们。
 
 ### 5.7 构建
 
-当前 `0.1.0` 的 DEX 适配层仍通过 producer 任务输出执行就地后处理。插件会记录成功变换后的 DEX
+当前 `0.1.1` 的 DEX 适配层仍通过 producer 任务输出执行就地后处理。插件会记录成功变换后的 DEX
 目录内容指纹；连续增量构建复用完全相同的 producer 输出时会直接跳过，源码或上游 DEX 变化后则重新处理。
 默认严格的发布构建会自动使 ASM 变换的输入失效，并核对本轮全部已选 class；普通发布命令不需要
 `--rerun-tasks`。只有排查上游缓存或修复已损坏 evidence 时才需要它：
@@ -1168,15 +1168,15 @@ range/wide 约束或方法结构不适合强模板。最终 `dexFailed=0` 且应
 所有 fresh 目录 DEX 一起恢复到任务开始前；下次 clean `--rerun-tasks` 会从 producer 原始产物
 重新执行。优先：
 
-- 查看日志是否出现 `skip unchanged already-obfuscated DEX dir`；若没有且怀疑使用了旧插件，确认宿主版本为 `0.1.0`。
+- 查看日志是否出现 `skip unchanged already-obfuscated DEX dir`；若没有且怀疑使用了旧插件，确认宿主版本为 `0.1.1`。
 - 将 `HIGH` 降为 `MEDIUM` 或 `LOW`。
 - 缩小 `dexObfuscator.obfClass` 范围。
 - 将超大/大量 switch 的生成代码加入 `dexObfuscator.blackClass`。
 
 ### 12.6 找不到 `retraceReleaseDexCfgStackTrace` 或提示找不到 Android Retrace
 
-线上 `0.1.0` 不包含栈回溯 task；该能力当前仅存在于 `v0.1.0` 之后的 `dev`/`main` 源码构建，
-需要等待下一个正式版本。不要在宿主脚本中手工伪造同名 task。若 task 已存在但提示找不到 Retrace，
+`0.1.0` 不包含栈回溯 task；请升级到 `0.1.1` 或更高版本。不要在宿主脚本中手工伪造同名 task。
+若 task 已存在但提示找不到 Retrace，
 安装 Android SDK Command-line Tools，并检查 `android.sdkDirectory`、`ANDROID_HOME` 或
 `ANDROID_SDK_ROOT` 指向的 SDK 下是否存在 `cmdline-tools/latest/bin/retrace` 或某个版本目录的
 `bin/retrace`。
@@ -1189,7 +1189,7 @@ range/wide 约束或方法结构不适合强模板。最终 `dexFailed=0` 且应
 
 ### 12.8 连续第二次构建突然膨胀
 
-`0.1.0` 仍是 producer 输出目录的就地后处理模式，但会保存带校验和的 CFG evidence，其中包含目录指纹、
+`0.1.1` 仍是 producer 输出目录的就地后处理模式，但会保存带校验和的 CFG evidence，其中包含目录指纹、
 变换配置摘要和统计。只有当前 DEX 字节精确匹配 evidence 中的 post-transform 指纹，且配置摘要一致时才跳过。
 evidence 缺失、损坏、只剩 legacy state 或任一摘要失配都会 fail closed，并要求 clean `--rerun-tasks`。
 producer 重新生成、源码改变或 DEX 内容变化会触发正常混淆，避免连续构建再次扩大原始 switch padding。

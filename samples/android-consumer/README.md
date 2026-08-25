@@ -30,7 +30,7 @@ To verify the public GitHub Pages Maven repository rather than the included sour
 ```bash
 ./gradlew -p samples/android-consumer :app:assembleRelease \
   -PsamplePluginRepository=https://w296488320.github.io/DexCfgObfuscator/maven-repo \
-  -PsamplePluginVersion=0.1.0 \
+  -PsamplePluginVersion=0.1.1 \
   -PsampleProtection=string \
   --no-configuration-cache
 ```
@@ -48,8 +48,8 @@ constants and branch-heavy bytecode; it is test data only and contains no creden
 
 ## Stack-trace retrace smoke
 
-This source sample uses the post-`v0.1.0` implementation from the enclosing checkout. The published
-`0.1.0` artifact does not contain this task. Install Android SDK Command-line Tools before running
+This source sample exercises the implementation released in `0.1.1`. The published `0.1.0`
+artifact does not contain this task. Install Android SDK Command-line Tools before running
 the smoke test. CFG preserves valid input source positions and does not rename call frames.
 
 For a non-minified build, run the task against the already readable fixture:

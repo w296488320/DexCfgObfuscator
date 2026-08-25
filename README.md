@@ -43,7 +43,7 @@ JSON 报告。
 - Encodes and pads original switch keys with random 32-bit keys and visible character cases.
 - Relocates `fill-array-data`, packed-switch, and sparse-switch payloads on safe reorder paths.
 - Preserves/rebuilds try ranges and catch handlers on supported transformations.
-- **Unreleased after `0.1.0`:** preserves the minimum DEX line-number program required for crash
+- Since `0.1.1`, the plugin preserves the minimum DEX line-number program required for crash
   diagnosis and registers a `retrace<Variant>DexCfgStackTrace` task for build-matched R8 retracing.
 - Re-parses staged DEX files and verifies registers, branches, payloads, handlers, and try ranges.
 - Falls back conservatively when verifier analysis, register formats, or post-transform budgets fail.
@@ -64,17 +64,16 @@ JSON 报告。
 |---|---|
 | Plugin ID | `io.github.w296488320.dexcfgobf` |
 | Implementation group | `io.github.w296488320` |
-| Current version | `0.1.0` |
+| Current version | `0.1.1` |
 | Java baseline | Java 17 |
 | Development baseline | Gradle 9.6.1, AGP 9.3.1 |
 | Artifact type | Gradle plugin JAR distributed through a Maven repository |
 
-> **Development status:** stack-trace line preservation and the retrace task are implemented on
-> `dev`/`main` after `v0.1.0`, but are not part of the published `0.1.0` artifact. Online `0.1.0`
-> consumers must wait for the next immutable release; published `0.1.0` bytes will not be
-> overwritten. / **开发状态：** 行号保留与 retrace task 已在 `v0.1.0` 之后的 `dev`/`main`
-> 源码中实现，但线上 `0.1.0` 尚不包含该能力，必须等待下一个不可变正式版本，不能覆盖已发布的
-> `0.1.0`。
+> **Version boundary:** stack-trace line preservation and the retrace task are available in
+> `0.1.1`. APKs built with `0.1.0` do not gain missing CFG line positions retroactively, and the
+> published `0.1.0` bytes remain immutable. / **版本边界：** 行号保留与 retrace task 从 `0.1.1`
+> 开始提供；使用 `0.1.0` 构建的 APK 不会被事后补回已经丢失的 CFG 行号，已发布的 `0.1.0`
+> 制品仍保持不可变。
 
 The checked-in Android sample verifies string-only, CFG-only, combined, and R8-enabled Release APK
 builds on this baseline. Other Gradle/AGP versions, AAB, dynamic features, and OEM runtime behavior
@@ -115,7 +114,7 @@ Root project `build.gradle` / 项目根 `build.gradle`：
 plugins {
     // Keep existing Android/Kotlin declarations and add this line.
     // 保留已有 Android/Kotlin 插件声明，只增加这一行。
-    id 'io.github.w296488320.dexcfgobf' version '0.1.0' apply false
+    id 'io.github.w296488320.dexcfgobf' version '0.1.1' apply false
 }
 ```
 
@@ -147,9 +146,9 @@ dexControlFlowObfuscator {
 }
 ```
 
-If the root project does not manage plugin versions, put `version '0.1.0'` on the module plugin line
+If the root project does not manage plugin versions, put `version '0.1.1'` on the module plugin line
 instead; use exactly one version-management style. / 如果根项目不统一管理插件版本，才在模块插件 ID
-后追加 `version '0.1.0'`；两种方式选择一种即可。
+后追加 `version '0.1.1'`；两种方式选择一种即可。
 
 ### Offline fallback / 离线备用
 
@@ -186,8 +185,8 @@ The report is written to:
 app/build/reports/dex-cfg-obfuscator/<variant>.json
 ```
 
-The following workflow is currently available only from a `dev`/`main` source build after `v0.1.0`;
-the published `0.1.0` plugin does not register this task. Install Android SDK Command-line Tools and
+The following workflow requires plugin `0.1.1` or later; the published `0.1.0` plugin does not
+register this task. Install Android SDK Command-line Tools and
 ensure its `retrace` executable is available first. CFG changes instruction layout inside a method,
 but it does not add, remove, or rename Java call frames. The transform therefore keeps the minimum
 valid `LineNumber` information already present in its input DEX; it cannot invent a missing source
@@ -210,7 +209,7 @@ identity, APK hash, and mapping in private release storage. Omit `--mapping-file
 just-built, confirmed-matching variant in the current checkout. The task never rebuilds or changes
 an APK and never uploads the mapping or trace.
 
-这套流程目前只在 `v0.1.0` 之后的 `dev`/`main` 源码构建中可用，线上 `0.1.0` 不会注册该任务。
+这套流程需要 `0.1.1` 或更高版本；`0.1.0` 不会注册该任务。
 请先安装 Android SDK Command-line Tools 并确认其中的 `retrace` 可执行。CFG 只改变方法内部指令
 布局，默认保留输入 DEX 中已有且有效的最小 residual line，不会凭空生成缺失源码位置；R8 日志
 继续使用同一次构建且未修改的原始
@@ -297,12 +296,12 @@ generated report paths.
 ## Important limitations / 重要限制
 
 - The current public AGP API does not expose a stable post-R8 DEX transform artifact for this
-  integration. Version `0.1.0` locates the DEX-producing task and modifies its output after staging
+  integration. Version `0.1.1` locates the DEX-producing task and modifies its output after staging
   verification.
-- Version `0.1.0` supports both `mergeProjectDex<Variant>` and application task graphs that expose
+- Version `0.1.1` supports both `mergeProjectDex<Variant>` and application task graphs that expose
   only `mergeDex<Variant>`; explicit package filters still prevent dependency classes from being
   transformed unintentionally.
-- Version `0.1.0` binds each successfully transformed DEX directory to checksummed CFG statistics,
+- Version `0.1.1` binds each successfully transformed DEX directory to checksummed CFG statistics,
   transform configuration, and artifact fingerprints. Cached builds restore those statistics and
   re-run all gates; an OS file lock serializes each DEX transaction, while a pre-transform
   transaction marker detects interrupted evidence commits.
@@ -312,7 +311,7 @@ generated report paths.
   a variant-wide transaction snapshots every candidate DEX and writable evidence/state/report file;
   any caught later gate or evidence failure restores the complete pre-task artifact set. An abrupt
   process termination remains fail-closed through the pre-transform transaction marker.
-- Version `0.1.0` reads the DEX header and selects the matching opcode table, including `dex.039`
+- Version `0.1.1` reads the DEX header and selects the matching opcode table, including `dex.039`
   `invoke-polymorphic`/`invoke-custom`, instead of forcing the legacy API 20 table.
 - Decompiler rendering is not an API. A character switch may still be displayed as decimal integers.
 - Some register encodings, wide/range instructions, monitor operations, verifier-ambiguous methods,
