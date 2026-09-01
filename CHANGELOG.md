@@ -4,6 +4,16 @@ All notable user-visible changes are documented in this file. The project follow
 
 ## [Unreleased]
 
+## [0.1.2] - 2026-09-01
+
+### Changed
+
+- `stringEncryption.enabled` and a non-empty `stringEncryption.enabledVariants` selector now use
+  OR semantics: either input can enable string protection for a variant. The default
+  `enabled=false` plus an empty selector remains disabled.
+- String quality, final-DEX plaintext, and decryptor-CFG gates now remain active when a variant is
+  enabled only through `stringEncryption.enabledVariants`.
+
 ## [0.1.1] - 2026-08-25
 
 ### Added

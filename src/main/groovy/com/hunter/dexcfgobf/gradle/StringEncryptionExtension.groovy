@@ -12,7 +12,10 @@ import com.hunter.dexcfgobf.string.StringEncryptionMode
  */
 class StringEncryptionExtension {
     boolean enabled = false
-    /** 空表示所有 variant；通常仅独立发布的 library 才需要限制字符串阶段。 */
+    /**
+     * 非空 selector 可独立启用匹配 variant；空列表本身不启用任何 variant。
+     * A non-empty selector can independently enable matching variants; an empty list enables none.
+     */
     List<String> enabledVariants = []
     boolean debug = false
     String implementation

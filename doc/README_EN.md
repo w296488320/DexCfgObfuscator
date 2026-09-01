@@ -40,7 +40,7 @@ Current coordinates:
 |---|---|
 | Gradle Plugin ID | `io.github.w296488320.dexcfgobf` |
 | Group | `io.github.w296488320` |
-| Version | `0.1.1` |
+| Version | `0.1.2` |
 | Java | 17 |
 | Current development baseline | Gradle 9.6.1, AGP 9.3.1 |
 | DEX implementation | `com.android.tools.smali:smali-dexlib2:3.0.9` |
@@ -67,7 +67,7 @@ the later “Obtaining the plugin,” “Consumer integration,” and “DSL ref
 Immutable tags publish a complete Maven repository to GitHub Pages. Normal consumers need no
 account, repository checkout, copied JAR, or local plugin build. Gradle Plugin Portal and Maven
 Central use the same plugin ID when those standard mirrors become available. Download the GitHub
-Release `dex-cfg-obfuscator-0.1.1-maven-repo.zip` only for offline/internal distribution, and use its
+Release `dex-cfg-obfuscator-0.1.2-maven-repo.zip` only for offline/internal distribution, and use its
 complete `maven-repo/`; do not copy only the implementation JAR.
 
 ### Step 2: register the plugin repository in project-level `settings.gradle`
@@ -104,12 +104,12 @@ Keep the consumer's existing Android plugins and versions, and add only the line
 ```groovy
 plugins {
     // Keep the existing Android/Kotlin plugin declarations here.
-    id 'io.github.w296488320.dexcfgobf' version '0.1.1' apply false
+    id 'io.github.w296488320.dexcfgobf' version '0.1.2' apply false
 }
 ```
 
 If versions are not managed in the root project, the module may instead use
-`id 'io.github.w296488320.dexcfgobf' version '0.1.1'`. Choose one version-management style; do not declare
+`id 'io.github.w296488320.dexcfgobf' version '0.1.2'`. Choose one version-management style; do not declare
 conflicting versions in both locations.
 If the root script does not already contain `plugins {}`, place the new block after any existing
 `buildscript {}` block and before other ordinary configuration blocks.
@@ -159,11 +159,17 @@ and decryptor-CFG gates already use secure defaults. A normal Release build auto
 verifies a complete ASM traversal; callers do not need `--rerun-tasks` for the default strict gate.
 Advanced overrides are documented later.
 
+Starting with `0.1.2`, string protection uses OR semantics between the global `enabled` flag and a
+non-empty `enabledVariants` selector. `enabled true` enables every variant; alternatively, keep it
+`false` and select exact variant/build-type names. The default `false + []` remains disabled. Do not
+use `enabled true` with `enabledVariants = ['release']` as a Release-only filter, because the global
+flag enables every variant.
+
 When upgrading from `0.0.15` or `0.0.16` to `0.1.0`, move the flat CFG `enabled`, `level`, `obfClass`,
 `blackClass`, quality-gate, and adversarial-command properties into `dexObfuscator {}`, and remove
-the CFG `enabledVariants` selector. Keep `stringEncryption {}` as a sibling module. Its standalone
-library `enabledVariants` and the legacy `dependencyEvidenceVariants` field are unrelated selectors
-and remain available.
+the CFG `enabledVariants` selector. Keep `stringEncryption {}` as a sibling module. Its string-stage
+`enabledVariants` and the legacy `dependencyEvidenceVariants` field are unrelated selectors and
+remain available.
 Do not consume `0.0.16`: `0.1.0` fixes the nested mutation callback on a real Gradle-decorated
 Extension instance, without which nested module configuration can fail.
 
@@ -192,10 +198,9 @@ dexControlFlowObfuscator {
 }
 ```
 
-The optional `stringEncryption.enabledVariants` selector is available for standalone library
-publishing; it is intentionally absent from the normal application setup. Legacy evidence merging
-for project libraries that arrive pre-encrypted is documented only in the advanced compatibility
-section.
+To protect only selected application or library variants, keep `enabled false` and use the exact
+`stringEncryption.enabledVariants` selector. Legacy evidence merging for project libraries that
+arrive pre-encrypted is documented only in the advanced compatibility section.
 
 ### Step 6: build and inspect the report
 
@@ -498,12 +503,12 @@ plain block reordering.
 ```mermaid
 flowchart LR
     A["Android variant"] --> V{"variant type"}
-    V -->|library| LB{"stringEncryption.enabled"}
+    V -->|library| LB{"string stage enabled<br/>enabled OR selector"}
     LB -->|false| LA["AAR output"]
     LB -->|true| LC["PROJECT ASM + decryptor bridge"]
     LC --> L["Fresh constant-pool compaction + JVM UTF8 gate"]
     L --> LA
-    V -->|application| AB{"stringEncryption.enabled"}
+    V -->|application| AB{"string stage enabled<br/>enabled OR selector"}
     AB -->|true| C["ALL ASM + decryptor bridge"]
     AB -->|false| E["D8/R8"]
     C --> E
@@ -544,7 +549,7 @@ The distribution is not a standalone copied JAR. It is a directory-style Maven r
 the current implementation JAR, POM metadata, Gradle plugin marker, and checksums:
 
 ```text
-dex-cfg-obfuscator-0.1.1-maven-repo.zip
+dex-cfg-obfuscator-0.1.2-maven-repo.zip
 └── maven-repo/
     └── io/github/w296488320/...
 ```
@@ -609,8 +614,8 @@ pluginManagement {
 
 ### 5.3 Groovy application module `build.gradle`
 
-The module examples below assume that the root `build.gradle` already declares version `0.1.1`
-with `apply false`. Add `version '0.1.1'` after the module plugin ID only when there is no
+The module examples below assume that the root `build.gradle` already declares version `0.1.2`
+with `apply false`. Add `version '0.1.2'` after the module plugin ID only when there is no
 project-level declaration.
 
 ```groovy
@@ -709,8 +714,8 @@ dexControlFlowObfuscator {
 ### 5.6 Android library module
 
 An Android library can apply the same plugin, but only its pre-D8/R8 string stage runs. This is for
-protecting a standalone AAR before publishing it. A consuming `0.1.1` application already uses
-`ALL` scope and does not require the plugin on each library dependency.
+protecting a standalone AAR before publishing it. Applications using `0.1.1` or later already use
+`ALL` scope and do not require the plugin on each library dependency.
 
 ```groovy
 plugins {
@@ -720,8 +725,8 @@ plugins {
 
 dexControlFlowObfuscator {
     stringEncryption {
-        enabled true
-        // Advanced: publish only selected standalone-library variants. Empty means every variant.
+        // In 0.1.2 the selector independently enables matches; keep the global flag false.
+        enabled false
         enabledVariants = ['release']
         mode StringEncryptionMode.BYTES
         packages = ['com.example.library']
@@ -784,7 +789,7 @@ the library must also be distributed as a protected standalone artifact.
 
 ### 5.7 Build
 
-Version `0.1.1` still performs an in-place post-processing step on the DEX producer output. It
+Version `0.1.2` still performs an in-place post-processing step on the DEX producer output. It
 records the content fingerprint of every successfully transformed DEX directory. A consecutive
 incremental build skips an exact post-transform match, while changed or regenerated DEX is processed
 normally. Strict Release builds automatically invalidate the ASM transform input and verify every
@@ -833,8 +838,8 @@ relocation, multiple templates, and JSON reports remain enabled by default.
 
 | Property | Default | Description |
 |---|---|---|
-| `enabled` | `false` | Enables string rewriting; application scope is `ALL`, standalone-library scope is `PROJECT`; `enable true` is accepted |
-| `enabledVariants` | `[]` | Advanced variant/build-type selector, mainly for standalone library publishing; empty means every variant |
+| `enabled` | `false` | Globally enables string rewriting for every variant; application scope is `ALL`, standalone-library scope is `PROJECT`; `enable true` is accepted |
+| `enabledVariants` | `[]` | Exact variant/build-type selector using OR semantics with `enabled`; a non-empty selector independently enables matches, while an empty list enables none |
 | `implementation` | `null` | Runtime Android decryptor FQCN; without `algorithm`, the build also instantiates this class |
 | `algorithm` | `null` | Optional build-time cipher object; a matching runtime `implementation` is still required |
 | `keyGenerator` / `kg` | built-in | Build-time key generator object or one/two-argument Groovy closure |
@@ -985,8 +990,8 @@ Version `0.1.0` separates each protection feature into its own module. Move the 
 `level`, `obfClass`, `blackClass`, quality-gate, and adversarial-command properties from
 `dexControlFlowObfuscator {}` into `dexObfuscator {}`. Remove the CFG `enabledVariants` selector and
 let the consumer decide with `dexObfuscator.enabled`. `stringEncryption {}` remains in place; its
-`enabledVariants` still serves advanced standalone-library publication, while
-`dependencyEvidenceVariants` remains a legacy evidence compatibility field.
+`enabledVariants` can independently enable exact application/library variants through OR semantics,
+while `dependencyEvidenceVariants` remains a legacy evidence compatibility field.
 
 Do not continue using `0.0.16`: it worked with direct test objects, but a real Gradle-decorated
 Extension instance did not invoke the nested mutation callback correctly. Version `0.1.0` fixes
@@ -1284,7 +1289,7 @@ restores it together with all evidence/state/pending files and every fresh-direc
 clean `--rerun-tasks` build starts again from the producer's original artifact. First:
 
 - Look for `skip unchanged already-obfuscated DEX dir`; if it is absent and an old plugin may be in
-  use, confirm that the host requests version `0.1.1`.
+  use, confirm that the host requests version `0.1.2`.
 - Reduce `HIGH` to `MEDIUM` or `LOW`.
 - Narrow `dexObfuscator.obfClass`.
 - Exclude generated code with very large or numerous switches.
@@ -1306,7 +1311,7 @@ source line after the fact.
 
 ### 12.8 A second consecutive build grows unexpectedly
 
-Version `0.1.1` still post-processes the producer output directory in place, but records checksummed
+Version `0.1.2` still post-processes the producer output directory in place, but records checksummed
 CFG evidence containing the directory fingerprint, transform digest, and statistics. It skips only
 when current DEX bytes exactly match the evidenced post-transform fingerprint and the transform
 digest also matches. Missing, corrupt, state-only, or mismatched evidence fails closed and asks for a

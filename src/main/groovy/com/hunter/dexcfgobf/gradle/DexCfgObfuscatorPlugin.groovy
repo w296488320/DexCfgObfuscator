@@ -106,10 +106,10 @@ class DexCfgObfuscatorPlugin implements Plugin<Project> {
                             'application-only; library project ' +
                             "${project.path} cannot aggregate another library's final-DEX evidence")
                 }
-                boolean stringEnabled = ext.stringEncryption.enabled &&
-                        isVariantSelected(ext.stringEncryption.enabledVariants,
-                                variantName, buildTypeName,
-                                'stringEncryption.enabledVariants')
+                boolean stringEnabled = isStringEnabledForVariant(
+                        ext.stringEncryption.enabled,
+                        ext.stringEncryption.enabledVariants,
+                        variantName, buildTypeName)
                 if (stringEnabled) {
                     String registryKey = configureStringEncryption(
                             project, variant, ext, variantName, variantCap, false,
@@ -154,11 +154,11 @@ class DexCfgObfuscatorPlugin implements Plugin<Project> {
                                 ext.stringEncryption.dependencyEvidenceProjects)
                         : Collections.emptyList()
 
-                // 两个模块独立开关；新 CFG 模块不再内置 variant 过滤。
-                boolean stringEnabled = ext.stringEncryption.enabled &&
-                        isVariantSelected(ext.stringEncryption.enabledVariants,
-                                variantName, buildTypeName,
-                                'stringEncryption.enabledVariants')
+                // 两个模块独立；字符串阶段可由全局开关或非空 selector 启用。
+                boolean stringEnabled = isStringEnabledForVariant(
+                        ext.stringEncryption.enabled,
+                        ext.stringEncryption.enabledVariants,
+                        variantName, buildTypeName)
                 String stringRegistryKey = stringEnabled
                         ? configureStringEncryption(project, variant, ext, variantName, variantCap,
                                 cfgEnabled, true, failOnUnknownCoverage)
@@ -1859,7 +1859,7 @@ class DexCfgObfuscatorPlugin implements Plugin<Project> {
     private static void failOnPlaintextLeakIfConfigured(StringEncryptionExtension strings,
                                                          ObfuscatorStats stats,
                                                          String variantName) {
-        if (strings.enabled && strings.verifyFinalDex && strings.failOnPlaintextLeak) {
+        if (strings.verifyFinalDex && strings.failOnPlaintextLeak) {
             if (!stats.stringPlaintextVerified) {
                 throw new GradleException("[dex-cfg-obf] ${variantName}: final DEX plaintext gate " +
                         "has no evidence bound to the current artifact/configuration; run clean " +
@@ -1880,8 +1880,8 @@ class DexCfgObfuscatorPlugin implements Plugin<Project> {
 
     /**
      * Apply final application string gates only when this exact variant registered the string
-     * transform. The extension object is shared by every variant, so strings.enabled alone cannot
-     * distinguish a variant excluded by stringEncryption.enabledVariants.
+     * transform. The extension object is shared by every variant, so neither the global switch nor
+     * the selector alone can describe whether this exact variant registered the stage.
      */
     static void enforceVariantStringGates(boolean stringStageEnabled,
                                           StringEncryptionExtension strings,
@@ -1907,7 +1907,6 @@ class DexCfgObfuscatorPlugin implements Plugin<Project> {
                                                          ObfuscatorStats stats,
                                                          String variantName,
                                                          boolean failOnUnknownCoverage) {
-        if (!strings.enabled) return
         if (!isTrustedFullCoverage(stats.stringCoverageStatus)) {
             if (failOnUnknownCoverage) {
                 throw new GradleException("[dex-cfg-obf] ${variantName}: string coverage status is " +
@@ -2277,7 +2276,7 @@ class DexCfgObfuscatorPlugin implements Plugin<Project> {
             ObfuscatorConfig config,
             ObfuscatorStats stats,
             String variantName) {
-        if (!strings.enabled || !strings.failOnUnprotectedDecryptor) return
+        if (!strings.failOnUnprotectedDecryptor) return
         int required = config.requiredResolvedIncludeMethods.size()
         if (required == 0) {
             if (stats.stringConstantsEncrypted > 0) {
@@ -3707,6 +3706,22 @@ class DexCfgObfuscatorPlugin implements Plugin<Project> {
         boolean selected = isVariantSelected(enabledVariants, variantName, buildType,
                 'enabledVariants')
         return enabled && selected
+    }
+
+    /**
+     * String protection uses two alternative enablement inputs. The global flag enables every
+     * variant, while a non-empty selector enables only matching variants. An empty selector must
+     * not turn the default false flag into an implicit global enablement.
+     */
+    static boolean isStringEnabledForVariant(boolean enabled,
+                                             Collection<?> enabledVariants,
+                                             String variantName,
+                                             String buildType) {
+        Collection<?> selectors = enabledVariants ?: Collections.emptyList()
+        boolean selected = !selectors.isEmpty() &&
+                isVariantSelected(selectors, variantName, buildType,
+                        'stringEncryption.enabledVariants')
+        return enabled || selected
     }
 
     /** Shared exact, case-insensitive selector for independent variant-aware stages/gates. */

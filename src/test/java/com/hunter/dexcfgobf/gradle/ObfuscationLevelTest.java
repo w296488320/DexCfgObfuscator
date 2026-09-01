@@ -151,14 +151,32 @@ public class ObfuscationLevelTest {
     }
 
     @Test
+    public void enablesStringStageByGlobalFlagOrNonEmptyVariantSelector() {
+        assertFalse(DexCfgObfuscatorPlugin.isStringEnabledForVariant(false,
+                Collections.emptyList(), "debug", "debug"));
+        assertTrue(DexCfgObfuscatorPlugin.isStringEnabledForVariant(true,
+                Collections.emptyList(), "debug", "debug"));
+        assertTrue(DexCfgObfuscatorPlugin.isStringEnabledForVariant(true,
+                Collections.singletonList("release"), "debug", "debug"));
+        assertTrue(DexCfgObfuscatorPlugin.isStringEnabledForVariant(false,
+                Collections.singletonList("release"), "freeRelease", "release"));
+        assertFalse(DexCfgObfuscatorPlugin.isStringEnabledForVariant(false,
+                Collections.singletonList("release"), "debug", "debug"));
+        assertThrows(GradleException.class, () ->
+                DexCfgObfuscatorPlugin.isStringEnabledForVariant(true,
+                        Collections.singletonList(" "), "debug", "debug"));
+    }
+
+    @Test
     public void excludedApplicationStringVariantKeepsStringGatesDisabled() {
         StringEncryptionExtension strings = new StringEncryptionExtension();
-        strings.enabled(true);
+        strings.enabled(false);
         strings.enabledVariants("release");
-        boolean debugStringStageEnabled = strings.getEnabled()
-                && DexCfgObfuscatorPlugin.isVariantSelected(strings.getEnabledVariants(),
-                "debug", "debug", "stringEncryption.enabledVariants");
+        boolean debugStringStageEnabled = DexCfgObfuscatorPlugin.isStringEnabledForVariant(
+                strings.getEnabled(), strings.getEnabledVariants(), "debug", "debug");
         assertFalse(debugStringStageEnabled);
+        assertTrue(DexCfgObfuscatorPlugin.isStringEnabledForVariant(
+                strings.getEnabled(), strings.getEnabledVariants(), "release", "release"));
 
         ObfuscatorStats stats = new ObfuscatorStats();
         ObfuscatorConfig config = new ObfuscatorConfig();
@@ -168,8 +186,8 @@ public class ObfuscationLevelTest {
         assertEquals(Integer.MAX_VALUE, stats.stringMaxUnsafeSkippedStrings);
         assertFalse(stats.stringFailOnUnknownCoverage);
 
-        // Global strings.enabled remains true, but this excluded variant must not require string
-        // evidence, a final-DEX plaintext result, or decryptor CFG coverage.
+        // A selector-excluded variant must not require string evidence, a final-DEX plaintext
+        // result, or decryptor CFG coverage.
         DexCfgObfuscatorPlugin.enforceVariantStringGates(
                 debugStringStageEnabled, strings, config, stats, "debug", true);
 

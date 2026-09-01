@@ -64,7 +64,7 @@ JSON 报告。
 |---|---|
 | Plugin ID | `io.github.w296488320.dexcfgobf` |
 | Implementation group | `io.github.w296488320` |
-| Current version | `0.1.1` |
+| Current version | `0.1.2` |
 | Java baseline | Java 17 |
 | Development baseline | Gradle 9.6.1, AGP 9.3.1 |
 | Artifact type | Gradle plugin JAR distributed through a Maven repository |
@@ -114,7 +114,7 @@ Root project `build.gradle` / 项目根 `build.gradle`：
 plugins {
     // Keep existing Android/Kotlin declarations and add this line.
     // 保留已有 Android/Kotlin 插件声明，只增加这一行。
-    id 'io.github.w296488320.dexcfgobf' version '0.1.1' apply false
+    id 'io.github.w296488320.dexcfgobf' version '0.1.2' apply false
 }
 ```
 
@@ -146,9 +146,9 @@ dexControlFlowObfuscator {
 }
 ```
 
-If the root project does not manage plugin versions, put `version '0.1.1'` on the module plugin line
+If the root project does not manage plugin versions, put `version '0.1.2'` on the module plugin line
 instead; use exactly one version-management style. / 如果根项目不统一管理插件版本，才在模块插件 ID
-后追加 `version '0.1.1'`；两种方式选择一种即可。
+后追加 `version '0.1.2'`；两种方式选择一种即可。
 
 ### Offline fallback / 离线备用
 
@@ -161,6 +161,14 @@ extract it, and add its `maven-repo/` directory before the remote repositories i
 `dexObfuscator {}` and `stringEncryption {}` separately. Version `0.1.0` removes the CFG
 `enabledVariants` selector from the canonical DSL; the consumer decides whether to enable the CFG
 module. Additional CFG quality budgets remain available in the detailed documentation.
+
+Starting with `0.1.2`, `stringEncryption.enabled` and a non-empty
+`stringEncryption.enabledVariants` selector use OR semantics. Set `enabled true` to enable every
+variant, or leave it `false` and select exact variant/build-type names. An empty selector alone keeps
+the default disabled state; `enabled true` combined with a selector still enables every variant. /
+从 `0.1.2` 起，`stringEncryption.enabled` 与非空 `enabledVariants` 使用 OR 语义：可用
+`enabled true` 启用全部 variant，也可保持 `false` 并按精确 variant/buildType 选择。空列表本身
+不会启用字符串阶段；`enabled true` 与 selector 同时配置时仍然是全部启用。
 
 Do not consume version `0.0.16`. Version `0.1.0` fixes the nested mutation callback when Gradle
 decorates the real extension instance; without that fix, nested module configuration can fail during
@@ -296,12 +304,12 @@ generated report paths.
 ## Important limitations / 重要限制
 
 - The current public AGP API does not expose a stable post-R8 DEX transform artifact for this
-  integration. Version `0.1.1` locates the DEX-producing task and modifies its output after staging
+  integration. Version `0.1.2` locates the DEX-producing task and modifies its output after staging
   verification.
-- Version `0.1.1` supports both `mergeProjectDex<Variant>` and application task graphs that expose
+- Version `0.1.2` supports both `mergeProjectDex<Variant>` and application task graphs that expose
   only `mergeDex<Variant>`; explicit package filters still prevent dependency classes from being
   transformed unintentionally.
-- Version `0.1.1` binds each successfully transformed DEX directory to checksummed CFG statistics,
+- Version `0.1.2` binds each successfully transformed DEX directory to checksummed CFG statistics,
   transform configuration, and artifact fingerprints. Cached builds restore those statistics and
   re-run all gates; an OS file lock serializes each DEX transaction, while a pre-transform
   transaction marker detects interrupted evidence commits.
@@ -311,7 +319,7 @@ generated report paths.
   a variant-wide transaction snapshots every candidate DEX and writable evidence/state/report file;
   any caught later gate or evidence failure restores the complete pre-task artifact set. An abrupt
   process termination remains fail-closed through the pre-transform transaction marker.
-- Version `0.1.1` reads the DEX header and selects the matching opcode table, including `dex.039`
+- Version `0.1.2` reads the DEX header and selects the matching opcode table, including `dex.039`
   `invoke-polymorphic`/`invoke-custom`, instead of forcing the legacy API 20 table.
 - Decompiler rendering is not an API. A character switch may still be displayed as decimal integers.
 - Some register encodings, wide/range instructions, monitor operations, verifier-ambiguous methods,

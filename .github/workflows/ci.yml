@@ -67,12 +67,15 @@ jobs:
           # This is the regression that proves string encryption does not accidentally enable CFG.
           - protection: string
             minify: false
+            string-enablement: selector
           # Exercise CFG line-number preservation without R8 so regressions are attributable to CFG.
           - protection: cfg
             minify: false
+            string-enablement: global
           # This covers mapping-aware verification when both protections run after R8.
           - protection: both
             minify: true
+            string-enablement: global
 
     steps:
       - name: Check out repository
@@ -100,6 +103,7 @@ jobs:
           ./gradlew -p samples/android-consumer
           :app:assembleRelease
           -PsampleProtection=${{ matrix.protection }}
+          -PsampleStringEnablement=${{ matrix.string-enablement }}
           -PsampleMinify=${{ matrix.minify }}
           --no-daemon
           --no-configuration-cache

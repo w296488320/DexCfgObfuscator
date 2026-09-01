@@ -32,7 +32,7 @@ DexCfgObfuscator 是一个 Android 字符串与 DEX 控制流混淆 Gradle 插�
 |---|---|
 | Gradle Plugin ID | `io.github.w296488320.dexcfgobf` |
 | Group | `io.github.w296488320` |
-| Version | `0.1.1` |
+| Version | `0.1.2` |
 | Java | 17 |
 | 当前开发基线 | Gradle 9.6.1、AGP 9.3.1 |
 | DEX 实现 | `com.android.tools.smali:smali-dexlib2:3.0.9` |
@@ -58,7 +58,7 @@ string-only、CFG-only、双开、R8 开/关 APK 构建；library 的 `PROJECT` 
 正式 tag 会把完整 Maven 仓库发布到 GitHub Pages；普通项目无需账号、无需下载本仓库，也无需自行
 构建插件。Gradle Plugin Portal 与 Maven Central 上线后仍使用同一个 plugin ID，可作为标准镜像。
 只有离线/内部分发时，才下载 GitHub Release 中的
-`dex-cfg-obfuscator-0.1.1-maven-repo.zip`，解压后使用其中完整的 `maven-repo/`，不要只复制实现 JAR。
+`dex-cfg-obfuscator-0.1.2-maven-repo.zip`，解压后使用其中完整的 `maven-repo/`，不要只复制实现 JAR。
 
 ### 第 2 步：在项目级 `settings.gradle` 注册插件仓库
 
@@ -93,12 +93,12 @@ pluginManagement {
 ```groovy
 plugins {
     // 保留这里已有的 Android/Kotlin 插件声明。
-    id 'io.github.w296488320.dexcfgobf' version '0.1.1' apply false
+    id 'io.github.w296488320.dexcfgobf' version '0.1.2' apply false
 }
 ```
 
 如果不在根项目统一管理插件版本，也可以在模块的 `plugins` 块中直接写
-`id 'io.github.w296488320.dexcfgobf' version '0.1.1'`，两种写法选择一种即可，不要重复声明不同版本。
+`id 'io.github.w296488320.dexcfgobf' version '0.1.2'`，两种写法选择一种即可，不要重复声明不同版本。
 根脚本原来没有 `plugins {}` 时，新建的块应放在已有 `buildscript {}` 之后、其他普通配置块之前。
 
 ### 第 4 步：在 application 模块 `build.gradle` 应用并配置
@@ -142,10 +142,15 @@ dexControlFlowObfuscator {
 不安全跳过、主动过滤、最小加密数量、解密器保护和 release 完整覆盖率等安全门禁已经采用安全默认值，
 无需把它们逐项复制到业务脚本。
 
+从 `0.1.2` 起，字符串阶段的 `enabled` 与非空 `enabledVariants` 使用 OR 语义：`enabled true`
+会启用全部 variant；也可以保持 `enabled false`，仅由精确的 variant/buildType selector 启用命中项。
+默认的 `enabled false + enabledVariants=[]` 仍然关闭。不要用 `enabled true + enabledVariants=['release']`
+表达“仅 Release”，因为全局 `true` 会优先生效并启用全部 variant。
+
 从 `0.0.15` 或 `0.0.16` 升级到 `0.1.0` 时，把原来直接写在
 `dexControlFlowObfuscator {}` 下的 `enabled`、
 `level`、`obfClass`、`blackClass` 和 CFG 质量/对抗字段整体移入 `dexObfuscator {}`，并删除 CFG 的
-`enabledVariants`。`stringEncryption {}` 仍与 `dexObfuscator {}` 同级；其 standalone-library
+`enabledVariants`。`stringEncryption {}` 仍与 `dexObfuscator {}` 同级；其字符串阶段
 `enabledVariants` 和旧链路 `dependencyEvidenceVariants` 不是 CFG 选择器，仍然保留。
 不要使用 `0.0.16`；`0.1.0` 修复了真实 Gradle 装饰 Extension 实例下的 nested mutation
 callback，否则消费工程配置嵌套模块时可能失败。
@@ -174,8 +179,8 @@ dexControlFlowObfuscator {
 }
 ```
 
-如需只保护 library 的部分 variant，可使用后文的高级字段
-`stringEncryption.enabledVariants`。普通 application 接入不需要配置 dependency evidence。
+如需只保护部分 application/library variant，可保持 `enabled false`，并使用后文的
+`stringEncryption.enabledVariants` 精确选择。普通 application 接入不需要配置 dependency evidence。
 
 ### 第 6 步：构建并检查报告
 
@@ -447,12 +452,12 @@ schema-10 报告，再对 **variant 聚合统计** 统一执行 `dexObfuscator.m
 ```mermaid
 flowchart LR
     A["Android variant"] --> V{"变体类型"}
-    V -->|library| LB{"stringEncryption.enabled"}
+    V -->|library| LB{"字符串阶段已启用<br/>enabled OR selector"}
     LB -->|否| LA["AAR 输出"]
     LB -->|是| LC["PROJECT ASM + 解密 bridge"]
     LC --> L["fresh 常量池压实 + JVM UTF8 门禁"]
     L --> LA
-    V -->|application| AB{"stringEncryption.enabled"}
+    V -->|application| AB{"字符串阶段已启用<br/>enabled OR selector"}
     AB -->|是| C["ALL ASM（App/module/AAR/JAR）+ 解密 bridge"]
     AB -->|否| E["D8/R8"]
     C --> E
@@ -490,7 +495,7 @@ outputs 执行常量池门禁。最终 DEX 的 CFG 防护和全局明文证明�
 Maven 仓库，并且只包含当前版本：
 
 ```text
-dex-cfg-obfuscator-0.1.1-maven-repo.zip
+dex-cfg-obfuscator-0.1.2-maven-repo.zip
 └── maven-repo/
     └── io/github/w296488320/...
 ```
@@ -553,8 +558,8 @@ pluginManagement {
 
 ### 5.3 Groovy application 模块 `build.gradle`
 
-以下模块示例假定项目根 `build.gradle` 已用 `apply false` 声明 `0.1.1`。如果没有项目级声明，
-才在模块的插件 ID 后追加 `version '0.1.1'`。
+以下模块示例假定项目根 `build.gradle` 已用 `apply false` 声明 `0.1.2`。如果没有项目级声明，
+才在模块的插件 ID 后追加 `version '0.1.2'`。
 
 ```groovy
 import com.hunter.dexcfgobf.gradle.ObfuscationLevel
@@ -665,8 +670,8 @@ plugins {
 
 dexControlFlowObfuscator {
     stringEncryption {
-        enabled true
-        // 高级用法：独立 library 只发布 release AAR 时可限制字符串阶段的 variant。
+        // 0.1.2 的 selector 可独立启用命中项；全局 enabled 保持 false。
+        enabled false
         enabledVariants = ['release']
         mode StringEncryptionMode.BYTES
         packages = ['com.example.library']
@@ -693,7 +698,7 @@ application 最终 DEX/APK/AAB 的全局证明。发布 CI 仍应解包最终 AA
 
 #### 5.6.1 旧版预加密 library evidence 兼容（高级）
 
-`0.1.1` 的普通 application 路径不需要 `dependencyEvidenceProjects` 或
+`0.1.2` 的普通 application 路径不需要 `dependencyEvidenceProjects` 或
 `dependencyEvidenceVariants`：App 的 `ALL` scope 会直接改写完整依赖图，并在最终 DEX 上统一验证。
 这两个字段只用于迁移旧构建链：同一 Gradle 构建中的 project library 已经在 App 插桩之前由旧版流程
 预加密，App 因而看不到它的原始候选字符串，但仍需把该 library 的旧 member-scoped evidence 合并到
@@ -718,7 +723,7 @@ AAR/JAR 都不要配置它们。
 
 ### 5.7 构建
 
-当前 `0.1.1` 的 DEX 适配层仍通过 producer 任务输出执行就地后处理。插件会记录成功变换后的 DEX
+当前 `0.1.2` 的 DEX 适配层仍通过 producer 任务输出执行就地后处理。插件会记录成功变换后的 DEX
 目录内容指纹；连续增量构建复用完全相同的 producer 输出时会直接跳过，源码或上游 DEX 变化后则重新处理。
 默认严格的发布构建会自动使 ASM 变换的输入失效，并核对本轮全部已选 class；普通发布命令不需要
 `--rerun-tasks`。只有排查上游缓存或修复已损坏 evidence 时才需要它：
@@ -762,8 +767,8 @@ AAR/JAR 都不要配置它们。
 
 | 字段 | 默认值 | 说明 |
 |---|---|---|
-| `enabled` | `false` | 启用字符串改写；兼容 `enable true`。application 使用 `ALL` scope，library 使用 `PROJECT` scope |
-| `enabledVariants` | `[]` | 字符串阶段生效的 variant/buildType；空表示全部。主要用于限制独立 library 的发布 variant，普通 App 建议留空 |
+| `enabled` | `false` | 全局启用字符串改写；`true` 对全部 variant 生效，兼容 `enable true`。application 使用 `ALL` scope，library 使用 `PROJECT` scope |
+| `enabledVariants` | `[]` | 与 `enabled` 使用 OR 语义的精确 variant/buildType selector；非空时可独立启用命中项，空列表本身不启用任何 variant |
 | `implementation` | `null` | Android 运行时解密实现 FQCN；若没有 `algorithm`，构建期也实例化同名类 |
 | `algorithm` | `null` | 可选构建期算法对象；自定义时仍需提供匹配的 runtime `implementation` |
 | `keyGenerator` / `kg` | 内置 | 构建期 key 生成对象或一/二参数 Groovy Closure |
@@ -889,8 +894,8 @@ checked exception。静态模式设置 `decryptorStatic true`，并要求 public
 `0.1.0` 将各项防护明确拆为功能模块。把旧配置中直接位于 `dexControlFlowObfuscator {}` 下的
 `enabled`、`level`、`obfClass`、`blackClass`、CFG 质量门禁和对抗命令整体移入
 `dexObfuscator {}`。删除 CFG 的 `enabledVariants`，由宿主使用 `dexObfuscator.enabled` 直接决定
-是否启用。`stringEncryption {}` 无需移动；其 `enabledVariants` 仍只用于 standalone library 的
-高级发布选择，`dependencyEvidenceVariants` 仍是旧 evidence 链路的兼容字段。
+是否启用。`stringEncryption {}` 无需移动；其 `enabledVariants` 可按 OR 语义独立启用精确命中的
+application/library variant，`dependencyEvidenceVariants` 仍是旧 evidence 链路的兼容字段。
 
 `0.0.16` 不应继续使用：它在测试对象上可工作，但真实 Gradle 装饰 Extension 实例没有正确触发
 nested mutation callback。`0.1.0` 修复该回调，嵌套模块配置才会可靠写入实际 Extension。
@@ -1168,7 +1173,7 @@ range/wide 约束或方法结构不适合强模板。最终 `dexFailed=0` 且应
 所有 fresh 目录 DEX 一起恢复到任务开始前；下次 clean `--rerun-tasks` 会从 producer 原始产物
 重新执行。优先：
 
-- 查看日志是否出现 `skip unchanged already-obfuscated DEX dir`；若没有且怀疑使用了旧插件，确认宿主版本为 `0.1.1`。
+- 查看日志是否出现 `skip unchanged already-obfuscated DEX dir`；若没有且怀疑使用了旧插件，确认宿主版本为 `0.1.2`。
 - 将 `HIGH` 降为 `MEDIUM` 或 `LOW`。
 - 缩小 `dexObfuscator.obfClass` 范围。
 - 将超大/大量 switch 的生成代码加入 `dexObfuscator.blackClass`。
@@ -1189,7 +1194,7 @@ range/wide 约束或方法结构不适合强模板。最终 `dexFailed=0` 且应
 
 ### 12.8 连续第二次构建突然膨胀
 
-`0.1.1` 仍是 producer 输出目录的就地后处理模式，但会保存带校验和的 CFG evidence，其中包含目录指纹、
+`0.1.2` 仍是 producer 输出目录的就地后处理模式，但会保存带校验和的 CFG evidence，其中包含目录指纹、
 变换配置摘要和统计。只有当前 DEX 字节精确匹配 evidence 中的 post-transform 指纹，且配置摘要一致时才跳过。
 evidence 缺失、损坏、只剩 legacy state 或任一摘要失配都会 fail closed，并要求 clean `--rerun-tasks`。
 producer 重新生成、源码改变或 DEX 内容变化会触发正常混淆，避免连续构建再次扩大原始 switch padding。

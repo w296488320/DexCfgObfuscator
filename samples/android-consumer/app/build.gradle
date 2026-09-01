@@ -18,6 +18,17 @@ if (!supportedProtectionModes.contains(protectionMode)) {
 
 def enableStringProtection = protectionMode == 'string' || protectionMode == 'both'
 def enableCfgProtection = protectionMode == 'cfg' || protectionMode == 'both'
+def stringEnablement = providers.gradleProperty('sampleStringEnablement')
+        .getOrElse('global')
+        .trim()
+        .toLowerCase(Locale.ROOT)
+if (stringEnablement != 'global' && stringEnablement != 'selector') {
+    throw new GradleException("Unsupported -PsampleStringEnablement=${stringEnablement}; " +
+            'expected global or selector')
+}
+def enableStringsGlobally = enableStringProtection && stringEnablement == 'global'
+def selectedStringVariants = enableStringProtection && stringEnablement == 'selector'
+        ? ['release'] : []
 def minifyValue = providers.gradleProperty('sampleMinify')
         .getOrElse('false')
         .trim()
@@ -62,7 +73,8 @@ dexControlFlowObfuscator {
     }
 
     stringEncryption {
-        enabled enableStringProtection
+        enabled enableStringsGlobally
+        enabledVariants = selectedStringVariants
         mode StringEncryptionMode.BYTES
         packages = ['com.example.dexcfgsample']
         excludePackages = ['com.example.dexcfgsample.databinding']
@@ -70,4 +82,5 @@ dexControlFlowObfuscator {
 }
 
 logger.lifecycle("DexCfg consumer sample protection mode: ${protectionMode} " +
-        "(string=${enableStringProtection}, cfg=${enableCfgProtection}, minify=${sampleMinify})")
+        "(string=${enableStringProtection}, stringEnablement=${stringEnablement}, " +
+        "cfg=${enableCfgProtection}, minify=${sampleMinify})")

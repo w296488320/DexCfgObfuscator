@@ -72,7 +72,7 @@ gpg --keyserver keyserver.ubuntu.com --send-keys <完整主密钥指纹>
 
 ```bash
 git status --short
-git tag -a v0.1.1 -m 'DexCfgObfuscator 0.1.1'
+git tag -a v0.1.2 -m 'DexCfgObfuscator 0.1.2'
 ```
 
 ```bash

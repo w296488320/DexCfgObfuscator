@@ -13,7 +13,7 @@ body:
     id: plugin-version
     attributes:
       label: Plugin version
-      placeholder: 0.1.1
+      placeholder: 0.1.2
     validations:
       required: true
 

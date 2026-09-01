@@ -30,7 +30,7 @@ To verify the public GitHub Pages Maven repository rather than the included sour
 ```bash
 ./gradlew -p samples/android-consumer :app:assembleRelease \
   -PsamplePluginRepository=https://w296488320.github.io/DexCfgObfuscator/maven-repo \
-  -PsamplePluginVersion=0.1.1 \
+  -PsamplePluginVersion=0.1.2 \
   -PsampleProtection=string \
   --no-configuration-cache
 ```
@@ -42,13 +42,16 @@ checkout when online publication is missing or incomplete.
 `SamplePayload` available for final-DEX inspection while allowing R8 to optimize and rename it, so the
 last command also exercises mapping-aware string and CFG verification.
 
+`sampleStringEnablement=selector` exercises the `0.1.2` selector-only path (`enabled=false` with
+`enabledVariants=['release']`). Its default value, `global`, exercises the global `enabled=true` path.
+
 The APK is written to `app/build/outputs/apk/release/`. The plugin report is written under
 `app/build/reports/dex-cfg-obfuscator/`. `SamplePayload` intentionally contains inspectable string
 constants and branch-heavy bytecode; it is test data only and contains no credential or live URL.
 
 ## Stack-trace retrace smoke
 
-This source sample exercises the implementation released in `0.1.1`. The published `0.1.0`
+This source sample exercises the implementation released in `0.1.2`. The published `0.1.0`
 artifact does not contain this task. Install Android SDK Command-line Tools before running
 the smoke test. CFG preserves valid input source positions and does not rename call frames.
 
