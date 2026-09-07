@@ -40,7 +40,7 @@ java {
 
 dependencies {
     // 混淆算法核心：直接操作 DEX 指令，规避 dex2jar IR 往返导致的 65540 崩溃。
-    implementation 'com.android.tools.smali:smali-dexlib2:3.0.9'
+    implementation 'com.android.tools.smali:smali-dexlib2:3.0.10'
     // 字符串改写先缓冲整个方法，再用 CodeSizeEvaluator 对 JVM Code
     // attribute 的 65535-byte 上限做 fail-closed 预算。
     implementation 'org.ow2.asm:asm-tree:9.9'
@@ -51,7 +51,7 @@ dependencies {
     compileOnly 'com.android.tools.build:gradle:9.3.1'
 
     testImplementation 'junit:junit:4.13.2'
-    testImplementation 'com.android.tools.smali:smali-dexlib2:3.0.9'
+    testImplementation 'com.android.tools.smali:smali-dexlib2:3.0.10'
     testImplementation 'org.ow2.asm:asm:9.9'
     testImplementation 'org.ow2.asm:asm-tree:9.9'
     // Reflection contract tests load InstrumentationParameters at test runtime only.
