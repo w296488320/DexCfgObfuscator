@@ -5,7 +5,7 @@ import org.gradle.api.tasks.bundling.AbstractArchiveTask
 plugins {
     id 'groovy'
     id 'java-gradle-plugin'
-    id 'com.gradle.plugin-publish' version '2.1.1'
+    id 'com.gradle.plugin-publish' version '2.2.1'
     id 'maven-publish'
 }
 
